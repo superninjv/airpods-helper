@@ -2,3 +2,6 @@
 /daemon/target/
 *.swp
 *.swo
+packaging/*.tar.gz
+packaging/*.deb
+packaging/airpods-helper-*
