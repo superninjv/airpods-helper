@@ -1,0 +1,15 @@
+[device]
+# address = "AA:BB:CC:DD:EE:FF"  # auto-detected if not set
+# name = "Kevin's AirPods Pro"
+
+[eq]
+active_preset = "flat"
+auto_load = true
+
+[ear_detection]
+pause_media = true
+resume_media = true
+
+[reconnect]
+auto_reconnect = true
+max_retries = 3

@@ -1,0 +1,21 @@
+name = "Bass Boost"
+description = "Enhanced low-end for bass-heavy music"
+preamp = -4.0
+
+[[bands]]
+type = "lowshelf"
+freq = 100.0
+q = 0.7
+gain = 6.0
+
+[[bands]]
+type = "peaking"
+freq = 250.0
+q = 1.0
+gain = 2.0
+
+[[bands]]
+type = "peaking"
+freq = 1000.0
+q = 1.0
+gain = -1.0

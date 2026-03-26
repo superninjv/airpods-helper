@@ -1,0 +1,27 @@
+name = "Vocal Clarity"
+description = "Enhanced vocal presence and clarity"
+preamp = -2.0
+
+[[bands]]
+type = "peaking"
+freq = 200.0
+q = 1.0
+gain = -2.0
+
+[[bands]]
+type = "peaking"
+freq = 2500.0
+q = 1.5
+gain = 3.5
+
+[[bands]]
+type = "peaking"
+freq = 4000.0
+q = 2.0
+gain = 2.0
+
+[[bands]]
+type = "highshelf"
+freq = 8000.0
+q = 0.7
+gain = 1.5
