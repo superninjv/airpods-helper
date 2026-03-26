@@ -84,6 +84,12 @@ pub async fn run(
     seq.send(&aap::commands::SUBSCRIBE_NOTIFICATIONS).await?;
     debug!("sent notification subscribe");
 
+    // Enable all listening modes (Off + Noise + Transparency + Adaptive)
+    // Some AirPods have "Off" disabled in their iPhone config, which causes
+    // the Off command to be rejected with an error tone.
+    seq.send(&aap::commands::ENABLE_ALL_LISTENING_MODES).await?;
+    debug!("sent enable all listening modes");
+
     state.update(|s| s.connected = true);
     info!("handshake complete, entering main loop");
 
@@ -123,6 +129,7 @@ pub async fn run(
                 match cmd {
                     Some(L2capCommand::SetAncMode(mode)) => {
                         let pkt = aap::commands::set_anc_mode(mode);
+                        debug!("sending ANC mode {:?}: {:02X?}", mode, pkt);
                         if let Err(e) = seq.send(&pkt).await {
                             error!("failed to send ANC command: {e}");
                         }
@@ -173,8 +180,12 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
                     s.charging_right = right.charging;
                 }
                 if let Some(case) = &b.case {
-                    s.battery_case = case.level as i32;
-                    s.charging_case = case.charging;
+                    // Only update case battery if it's a real reading (case is open/charging)
+                    // When case closes, AirPods report 0% — preserve the last known value
+                    if case.level > 0 || case.charging {
+                        s.battery_case = case.level as i32;
+                        s.charging_case = case.charging;
+                    }
                 }
             });
         }
@@ -182,9 +193,10 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
             state.update(|s| s.anc_mode = *mode);
         }
         AapEvent::EarDetection(ed) => {
+            // AAP primary = right bud (controller), secondary = left
             state.update(|s| {
-                s.ear_left = ed.primary.is_in_ear();
-                s.ear_right = ed.secondary.is_in_ear();
+                s.ear_left = ed.secondary.is_in_ear();
+                s.ear_right = ed.primary.is_in_ear();
             });
         }
         AapEvent::ConversationalAwareness(enabled) => {

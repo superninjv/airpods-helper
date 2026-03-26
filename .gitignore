@@ -1,8 +1,11 @@
 /target/
 /daemon/target/
+/windows/target/
+/app/node_modules/
+/app/src-tauri/target/
+/app/src-tauri/gen/
 *.swp
 *.swo
 packaging/*.tar.gz
 packaging/*.deb
 packaging/airpods-helper-*
-/windows/target/
