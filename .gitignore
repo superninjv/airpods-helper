@@ -5,3 +5,4 @@
 packaging/*.tar.gz
 packaging/*.deb
 packaging/airpods-helper-*
+/windows/target/
