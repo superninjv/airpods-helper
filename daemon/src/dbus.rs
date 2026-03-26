@@ -121,8 +121,33 @@ impl AirPodsInterface {
     }
 
     #[zbus(property)]
+    fn model_name(&self) -> String {
+        self.state.current().model_name.clone()
+    }
+
+    #[zbus(property)]
     fn firmware(&self) -> String {
         self.state.current().firmware.clone()
+    }
+
+    #[zbus(property)]
+    fn volume_swipe(&self) -> bool {
+        self.state.current().volume_swipe
+    }
+
+    #[zbus(property)]
+    fn adaptive_volume(&self) -> bool {
+        self.state.current().adaptive_volume
+    }
+
+    #[zbus(property)]
+    fn chime_volume(&self) -> u8 {
+        self.state.current().chime_volume
+    }
+
+    #[zbus(property)]
+    fn audio_source(&self) -> String {
+        self.state.current().audio_source.clone()
     }
 
     // --- Methods ---
@@ -260,7 +285,12 @@ pub async fn emit_properties_changed(connection: &Connection, changed_props: &[&
             "AdaptiveNoiseLevel" => iface.adaptive_noise_level_changed(emitter).await,
             "OneBudAnc" => iface.one_bud_anc_changed(emitter).await,
             "Model" => iface.model_changed(emitter).await,
+            "ModelName" => iface.model_name_changed(emitter).await,
             "Firmware" => iface.firmware_changed(emitter).await,
+            "VolumeSwipe" => iface.volume_swipe_changed(emitter).await,
+            "AdaptiveVolume" => iface.adaptive_volume_changed(emitter).await,
+            "ChimeVolume" => iface.chime_volume_changed(emitter).await,
+            "AudioSource" => iface.audio_source_changed(emitter).await,
             "EqPreset" => iface.eq_preset_changed(emitter).await,
             "ConversationalActivityState" => iface.conversational_activity_state_changed(emitter).await,
             _ => Ok(()),

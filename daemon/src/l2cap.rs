@@ -5,7 +5,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::aap;
-use crate::aap::parser::{self, AapEvent};
+use crate::aap::parser::{self, AapEvent, AudioSource};
+use crate::models;
 use crate::state::SharedState;
 
 /// Commands that can be sent to the AirPods over L2CAP
@@ -204,9 +205,29 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
         AapEvent::OneBudAnc(enabled) => {
             state.update(|s| s.one_bud_anc = *enabled);
         }
+        AapEvent::VolumeSwipe(enabled) => {
+            state.update(|s| s.volume_swipe = *enabled);
+        }
+        AapEvent::AdaptiveVolume(enabled) => {
+            state.update(|s| s.adaptive_volume = *enabled);
+        }
+        AapEvent::ChimeVolume(level) => {
+            state.update(|s| s.chime_volume = *level);
+        }
+        AapEvent::AudioSource(source) => {
+            let value = match source {
+                AudioSource::None => "none",
+                AudioSource::Call => "call",
+                AudioSource::Media => "media",
+                AudioSource::Unknown(_) => "unknown",
+            };
+            state.update(|s| s.audio_source = value.to_string());
+        }
         AapEvent::DeviceInfo(info) => {
+            let display_name = models::model_display_name(&info.model).to_string();
             state.update(|s| {
                 s.model = info.model.clone();
+                s.model_name = display_name;
                 s.firmware = info.firmware.clone();
             });
         }

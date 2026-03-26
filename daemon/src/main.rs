@@ -4,6 +4,7 @@ mod config;
 mod dbus;
 mod eq;
 mod l2cap;
+mod models;
 mod mpris;
 mod state;
 
@@ -174,8 +175,20 @@ async fn main() -> anyhow::Result<()> {
                     AapEvent::OneBudAnc(_) => {
                         dbus::emit_properties_changed(&connection, &["OneBudAnc"]).await;
                     }
+                    AapEvent::VolumeSwipe(_) => {
+                        dbus::emit_properties_changed(&connection, &["VolumeSwipe"]).await;
+                    }
+                    AapEvent::AdaptiveVolume(_) => {
+                        dbus::emit_properties_changed(&connection, &["AdaptiveVolume"]).await;
+                    }
+                    AapEvent::ChimeVolume(_) => {
+                        dbus::emit_properties_changed(&connection, &["ChimeVolume"]).await;
+                    }
+                    AapEvent::AudioSource(_) => {
+                        dbus::emit_properties_changed(&connection, &["AudioSource"]).await;
+                    }
                     AapEvent::DeviceInfo(info) => {
-                        dbus::emit_properties_changed(&connection, &["Model", "Firmware"]).await;
+                        dbus::emit_properties_changed(&connection, &["Model", "ModelName", "Firmware"]).await;
                         dbus::emit_device_connected(&connection, &info.model).await;
                         dbus::emit_properties_changed(&connection, &["Connected"]).await;
 

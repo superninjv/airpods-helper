@@ -1,6 +1,6 @@
 use super::*;
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -25,7 +25,21 @@ pub enum AapEvent {
     DeviceInfo(DeviceInfoUpdate),
     AdaptiveNoiseLevel(u8),
     OneBudAnc(bool),
+    VolumeSwipe(bool),
+    AdaptiveVolume(bool),
+    ChimeVolume(u8),
+    HeadTracking(#[allow(dead_code)] Vec<u8>),
+    AudioSource(AudioSource),
     Disconnected,
+}
+
+/// Active audio source reported by AirPods
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioSource {
+    None,
+    Call,
+    Media,
+    Unknown(u8),
 }
 
 #[derive(Debug, Clone)]
@@ -103,8 +117,71 @@ pub fn parse(data: &[u8]) -> Result<AapEvent, ParseError> {
         CMD_BATTERY => parse_battery(&data[6..]),
         CMD_EAR_DETECTION => parse_ear_detection(&data[6..]),
         CMD_CONTROL => parse_control(&data[6..]),
+        CMD_AUDIO_SOURCE => parse_audio_source(&data[6..]),
+        CMD_HEAD_TRACKING => {
+            // Spatial audio head tracking data — high frequency, variable length
+            debug!("head tracking data, len={}", data.len());
+            Ok(AapEvent::HeadTracking(data[6..].to_vec()))
+        }
+        CMD_STEM_PRESS => {
+            // Stem press events are handled by the OS bluetooth stack
+            debug!("stem press event, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
         CMD_DEVICE_INFO => parse_device_info(data),
+        CMD_CONNECTED_DEVICES => {
+            // List of paired/connected devices — informational
+            debug!("connected devices notification, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
         CMD_CA_ACTIVITY => parse_ca_activity(&data[6..]),
+        CMD_EQ_DATA => {
+            // EQ settings data from device (140 bytes typical)
+            debug!("EQ data packet, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+
+        // Known but unhandled commands — log at debug to reduce noise
+        0x02 => {
+            // Likely device capabilities/features exchange
+            debug!("capabilities packet, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x08 => {
+            debug!("unknown command 0x08, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x0C => {
+            debug!("unknown command 0x0C, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x10 | 0x11 => {
+            // Smart routing / device handoff
+            debug!("smart routing packet 0x{cmd:02X}, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x12 => {
+            // Secondary control (case sounds, transparency customization)
+            debug!("secondary control packet, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x14 => {
+            // Connected device MAC address
+            debug!("connected MAC notification, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x4E => {
+            debug!("unknown command 0x4E, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x52 => {
+            debug!("unknown command 0x52, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
+        0x55 => {
+            debug!("unknown command 0x55, len={}", data.len());
+            Err(ParseError::UnknownCommand(cmd))
+        }
 
         _ => {
             warn!("unknown AAP command: 0x{cmd:02X}, len={}", data.len());
@@ -198,6 +275,61 @@ fn parse_control(payload: &[u8]) -> Result<AapEvent, ParseError> {
             let enabled = value == 0x01;
             Ok(AapEvent::OneBudAnc(enabled))
         }
+        SUB_VOLUME_SWIPE => {
+            let enabled = value == 0x01;
+            Ok(AapEvent::VolumeSwipe(enabled))
+        }
+        SUB_ADAPTIVE_VOLUME => {
+            let enabled = value == 0x01;
+            Ok(AapEvent::AdaptiveVolume(enabled))
+        }
+        SUB_CHIME_VOLUME => {
+            Ok(AapEvent::ChimeVolume(value))
+        }
+
+        // Known sub-commands — log at debug to reduce noise
+        SUB_DOUBLE_CLICK_INTERVAL => {
+            debug!("double-click interval: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_CLICK_HOLD_INTERVAL => {
+            debug!("click-hold interval: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_VOLUME_SWIPE_INTERVAL => {
+            debug!("volume swipe interval: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_CALL_MANAGEMENT => {
+            debug!("call management config: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        0x29 => {
+            // SSL — undocumented
+            debug!("control sub-command 0x29 (SSL): 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_HEARING_AID => {
+            debug!("hearing aid config: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_GAIN_SWIPE => {
+            debug!("gain swipe config: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_HEARING_ASSIST => {
+            debug!("hearing assist config: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        SUB_SLEEP_DETECTION => {
+            debug!("sleep detection config: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+        0x3E => {
+            debug!("control sub-command 0x3E: 0x{value:02X}");
+            Err(ParseError::UnknownCommand(sub_cmd))
+        }
+
         _ => {
             warn!("unhandled control sub-command: 0x{sub_cmd:02X} = 0x{value:02X}");
             Err(ParseError::UnknownCommand(sub_cmd))
@@ -226,6 +358,23 @@ fn parse_device_info(data: &[u8]) -> Result<AapEvent, ParseError> {
         serial: strings.get(3).cloned().unwrap_or_default(),
         firmware: strings.get(4).cloned().unwrap_or_default(),
     }))
+}
+
+/// Parse audio source notification (cmd 0x0E)
+/// Format (after header): [source_type, ...]
+fn parse_audio_source(payload: &[u8]) -> Result<AapEvent, ParseError> {
+    if payload.is_empty() {
+        return Err(ParseError::TooShort(0));
+    }
+
+    let source = match payload[0] {
+        0x00 => AudioSource::None,
+        0x01 => AudioSource::Call,
+        0x02 => AudioSource::Media,
+        other => AudioSource::Unknown(other),
+    };
+
+    Ok(AapEvent::AudioSource(source))
 }
 
 /// Parse conversational awareness activity notification (cmd 0x4B)
@@ -349,5 +498,84 @@ mod tests {
         let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1B, 0x02, 0x00, 0x00, 0x00];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::OneBudAnc(false)));
+    }
+
+    #[test]
+    fn test_parse_volume_swipe() {
+        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x25, 0x01, 0x00, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::VolumeSwipe(true)));
+
+        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x25, 0x02, 0x00, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::VolumeSwipe(false)));
+    }
+
+    #[test]
+    fn test_parse_adaptive_volume() {
+        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x26, 0x01, 0x00, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::AdaptiveVolume(true)));
+
+        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x26, 0x02, 0x00, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::AdaptiveVolume(false)));
+    }
+
+    #[test]
+    fn test_parse_chime_volume() {
+        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1F, 0x50, 0x00, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::ChimeVolume(0x50)));
+    }
+
+    #[test]
+    fn test_parse_audio_source() {
+        let data = [0x04, 0x00, 0x04, 0x00, 0x0E, 0x00, 0x02, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::AudioSource(AudioSource::Media)));
+
+        let data = [0x04, 0x00, 0x04, 0x00, 0x0E, 0x00, 0x01, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::AudioSource(AudioSource::Call)));
+
+        let data = [0x04, 0x00, 0x04, 0x00, 0x0E, 0x00, 0x00, 0x00, 0x00];
+        let event = parse(&data).unwrap();
+        assert!(matches!(event, AapEvent::AudioSource(AudioSource::None)));
+    }
+
+    #[test]
+    fn test_parse_head_tracking() {
+        // Head tracking packets are variable length
+        let data = [0x04, 0x00, 0x04, 0x00, 0x17, 0x00, 0x01, 0x02, 0x03];
+        let event = parse(&data).unwrap();
+        if let AapEvent::HeadTracking(payload) = event {
+            assert_eq!(payload, vec![0x01, 0x02, 0x03]);
+        } else {
+            panic!("expected HeadTracking event");
+        }
+    }
+
+    #[test]
+    fn test_known_commands_debug_not_warn() {
+        // These should return Err but NOT log at warn level (they use debug)
+        // We just verify they parse without panicking and return the expected error
+        let commands: &[u8] = &[0x02, 0x08, 0x0C, 0x4E, 0x52, 0x53, 0x55];
+        for &cmd in commands {
+            let data = [0x04, 0x00, 0x04, 0x00, cmd, 0x00, 0x00, 0x00, 0x00, 0x00];
+            let result = parse(&data);
+            assert!(result.is_err(), "command 0x{cmd:02X} should return Err");
+        }
+    }
+
+    #[test]
+    fn test_known_control_subcmds_debug_not_warn() {
+        // Known but unhandled control sub-commands should not panic
+        let subcmds: &[u8] = &[0x17, 0x18, 0x23, 0x24, 0x29, 0x2C, 0x2F, 0x33, 0x35, 0x3E];
+        for &sub in subcmds {
+            let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, sub, 0x00, 0x00, 0x00, 0x00];
+            let result = parse(&data);
+            assert!(result.is_err(), "sub-command 0x{sub:02X} should return Err");
+        }
     }
 }

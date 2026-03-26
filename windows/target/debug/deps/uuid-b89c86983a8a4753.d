@@ -1,0 +1,13 @@
+/home/jack/projects/airpods-helper/windows/target/debug/deps/uuid-b89c86983a8a4753.d: /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/lib.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/macros.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/builder.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/error.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/non_nil.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/parser.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/fmt.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/timestamp.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/external.rs
+
+/home/jack/projects/airpods-helper/windows/target/debug/deps/libuuid-b89c86983a8a4753.rmeta: /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/lib.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/macros.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/builder.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/error.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/non_nil.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/parser.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/fmt.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/timestamp.rs /home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/external.rs
+
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/lib.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/macros.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/builder.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/error.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/non_nil.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/parser.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/fmt.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/timestamp.rs:
+/home/jack/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.22.0/src/external.rs:
