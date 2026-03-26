@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AirPods Helper</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div class="header-top">
+        <div class="device-name" id="device-name">AirPods</div>
+        <div class="connection-badge" id="connection-badge">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="connection-text">Disconnected</span>
+        </div>
+      </div>
+      <div class="header-meta">
+        <span id="device-model" class="meta-item"></span>
+        <span id="device-firmware" class="meta-item"></span>
+      </div>
+    </header>
+
+    <!-- Battery -->
+    <section class="card" id="battery-section">
+      <h2 class="card-title">Battery</h2>
+      <div class="battery-grid">
+        <div class="battery-item">
+          <div class="battery-label">Left</div>
+          <div class="battery-bar-container">
+            <div class="battery-bar" id="battery-left-bar"></div>
+          </div>
+          <div class="battery-pct" id="battery-left-pct">--</div>
+          <div class="battery-charging" id="battery-left-charging"></div>
+        </div>
+        <div class="battery-item">
+          <div class="battery-label">Right</div>
+          <div class="battery-bar-container">
+            <div class="battery-bar" id="battery-right-bar"></div>
+          </div>
+          <div class="battery-pct" id="battery-right-pct">--</div>
+          <div class="battery-charging" id="battery-right-charging"></div>
+        </div>
+        <div class="battery-item">
+          <div class="battery-label">Case</div>
+          <div class="battery-bar-container">
+            <div class="battery-bar" id="battery-case-bar"></div>
+          </div>
+          <div class="battery-pct" id="battery-case-pct">--</div>
+          <div class="battery-charging" id="battery-case-charging"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ANC Mode -->
+    <section class="card">
+      <h2 class="card-title">Active Noise Control</h2>
+      <div class="anc-buttons">
+        <button class="anc-btn" data-mode="noise">Noise Cancel</button>
+        <button class="anc-btn" data-mode="transparency">Transparency</button>
+        <button class="anc-btn" data-mode="adaptive">Adaptive</button>
+      </div>
+      <div class="slider-row" id="adaptive-noise-row">
+        <label class="slider-label">Adaptive Level</label>
+        <input type="range" class="slider" id="adaptive-noise-slider" min="0" max="100" value="50">
+        <span class="slider-value" id="adaptive-noise-value">50</span>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="card">
+      <h2 class="card-title">Features</h2>
+      <div class="toggle-row">
+        <span class="toggle-label">Conversational Awareness</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-ca">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">One-Bud ANC</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-one-bud" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Volume Swipe</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-volume-swipe" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- EQ — disabled for BT audio, PipeWire restart kills connection -->
+    <!--
+    <section class="card">
+      <h2 class="card-title">EQ Preset</h2>
+      <div class="eq-buttons">
+        <button class="eq-btn" data-preset="flat">Flat</button>
+        <button class="eq-btn" data-preset="bass-boost">Bass Boost</button>
+        <button class="eq-btn" data-preset="vocal-clarity">Vocal Clarity</button>
+        <button class="eq-btn" data-preset="crinacle">Crinacle</button>
+      </div>
+    </section>
+    -->
+
+    <!-- Ear Status -->
+    <section class="card">
+      <h2 class="card-title">Ear Detection</h2>
+      <div class="ear-status">
+        <div class="ear-indicator" id="ear-left">
+          <div class="ear-dot" id="ear-left-dot"></div>
+          <span>Left</span>
+        </div>
+        <div class="ear-indicator" id="ear-right">
+          <div class="ear-dot" id="ear-right-dot"></div>
+          <span>Right</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="card">
+      <h2 class="card-title">Settings</h2>
+      <div class="toggle-row">
+        <span class="toggle-label">Auto-Reconnect</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-auto-reconnect" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Start on Login</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-start-login">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </section>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

@@ -57,6 +57,20 @@ pub fn set_one_bud_anc(enabled: bool) -> [u8; 11] {
     control_command(SUB_ONE_BUD_ANC, if enabled { 0x01 } else { 0x02 })
 }
 
+/// Set which listening modes are available in the rotation.
+/// Bitmask: 0x01=Off, 0x02=Noise, 0x04=Transparency, 0x08=Adaptive
+/// 0x0F = all modes enabled
+pub fn set_listening_mode_configs(modes: u8) -> [u8; 11] {
+    control_command(0x1A, modes)
+}
+
+/// Enable all listening modes (Off + Noise + Transparency + Adaptive)
+pub const ENABLE_ALL_LISTENING_MODES: [u8; 11] = [
+    HEADER[0], HEADER[1], HEADER[2], HEADER[3],
+    CMD_CONTROL, 0x00,
+    0x1A, 0x0F, 0x00, 0x00, 0x00,
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
