@@ -126,7 +126,8 @@ impl Config {
         }
     }
 
-    /// Save config to default path
+    /// Save config to default path (used by CLI config commands)
+    #[allow(dead_code)]
     pub fn save(&self) -> std::io::Result<()> {
         let path = config_path();
         if let Some(parent) = path.parent() {

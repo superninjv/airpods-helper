@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::watch;
 
-use crate::aap::{AncMode, EarStatus};
+use crate::aap::AncMode;
 
 /// Shared AirPods state, updated by the L2CAP reader and consumed by D-Bus
 #[derive(Debug, Clone)]
@@ -22,6 +22,7 @@ pub struct AirPodsState {
     pub model: String,
     pub firmware: String,
     pub eq_preset: String,
+    pub conversational_activity: String,
 }
 
 impl Default for AirPodsState {
@@ -43,6 +44,7 @@ impl Default for AirPodsState {
             model: String::new(),
             firmware: String::new(),
             eq_preset: String::new(),
+            conversational_activity: "normal".to_string(),
         }
     }
 }

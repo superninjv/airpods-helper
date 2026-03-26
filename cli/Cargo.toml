@@ -1,0 +1,15 @@
+[package]
+name = "airpods-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "airpods-cli"
+path = "src/main.rs"
+
+[dependencies]
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"

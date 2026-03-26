@@ -16,7 +16,3 @@ thiserror = "2"
 anyhow = "1.0.102"
 futures = "0.3.32"
 
-[profile.release]
-opt-level = "z"
-lto = true
-strip = true

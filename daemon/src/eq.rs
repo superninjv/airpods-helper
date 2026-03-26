@@ -18,6 +18,7 @@ pub enum EqCommand {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EqPreset {
     pub name: String,
+    #[allow(dead_code)] // displayed by CLI eq list command
     pub description: String,
     #[serde(default)]
     pub preamp: f64,
@@ -35,39 +36,48 @@ pub struct EqBand {
 }
 
 impl EqPreset {
-    /// Load an EQ preset from the config directory by name
+    /// Load an EQ preset by name, checking user dir then system dir
     pub fn load(name: &str) -> Option<Self> {
-        let path = config::eq_presets_dir().join(format!("{name}.toml"));
-        let content = std::fs::read_to_string(&path)
-            .inspect_err(|e| warn!("failed to read preset {name}: {e}"))
-            .ok()?;
-        toml::from_str(&content)
-            .inspect_err(|e| warn!("failed to parse preset {name}: {e}"))
-            .ok()
+        let filename = format!("{name}.toml");
+        // User presets take priority
+        let user_path = config::eq_presets_dir().join(&filename);
+        if let Ok(content) = std::fs::read_to_string(&user_path) {
+            return toml::from_str(&content)
+                .inspect_err(|e| warn!("failed to parse preset {name}: {e}"))
+                .ok();
+        }
+        // Fall back to system-installed presets
+        let system_path = PathBuf::from("/usr/share/airpods-helper/eq-presets").join(&filename);
+        if let Ok(content) = std::fs::read_to_string(&system_path) {
+            return toml::from_str(&content)
+                .inspect_err(|e| warn!("failed to parse system preset {name}: {e}"))
+                .ok();
+        }
+        warn!("preset {name} not found in user or system dirs");
+        None
     }
 
-    /// List all available preset names (without .toml extension)
+    /// List all available preset names from user + system dirs
     pub fn list_available() -> Vec<String> {
-        let dir = config::eq_presets_dir();
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            warn!("cannot read EQ presets dir: {}", dir.display());
-            return Vec::new();
-        };
-        let mut names: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let path = e.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                    path.file_stem()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.to_string())
-                } else {
-                    None
+        let mut names = std::collections::HashSet::new();
+        for dir in [
+            config::eq_presets_dir(),
+            PathBuf::from("/usr/share/airpods-helper/eq-presets"),
+        ] {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            names.insert(stem.to_string());
+                        }
+                    }
                 }
-            })
-            .collect();
-        names.sort();
-        names
+            }
+        }
+        let mut sorted: Vec<String> = names.into_iter().collect();
+        sorted.sort();
+        sorted
     }
 
     /// Returns true if this preset is effectively a no-op (no bands and no preamp)
@@ -153,7 +163,8 @@ impl EqManager {
         self.active_preset = None;
     }
 
-    /// Get the currently active preset name
+    /// Get the currently active preset name (used by CLI introspection)
+    #[allow(dead_code)]
     pub fn active_preset(&self) -> Option<&str> {
         self.active_preset.as_deref()
     }

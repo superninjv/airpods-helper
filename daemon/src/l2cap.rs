@@ -15,6 +15,7 @@ pub enum L2capCommand {
     SetConversationalAwareness(bool),
     SetAdaptiveNoiseLevel(u8),
     SetOneBudAnc(bool),
+    #[allow(dead_code)] // wired in match arm, constructed by future CLI disconnect command
     Disconnect,
 }
 
@@ -187,6 +188,15 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
         }
         AapEvent::ConversationalAwareness(enabled) => {
             state.update(|s| s.conversational_awareness = *enabled);
+        }
+        AapEvent::ConversationalActivity(activity) => {
+            use crate::aap::parser::CaActivity;
+            let value = match activity {
+                CaActivity::Speaking => "speaking",
+                CaActivity::Stopped => "stopped",
+                CaActivity::Normal => "normal",
+            };
+            state.update(|s| s.conversational_activity = value.to_string());
         }
         AapEvent::AdaptiveNoiseLevel(level) => {
             state.update(|s| s.adaptive_noise_level = *level);
