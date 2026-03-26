@@ -1,0 +1,8 @@
+[workspace]
+members = ["daemon", "cli"]
+resolver = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

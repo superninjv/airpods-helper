@@ -12,7 +12,8 @@ pub const AAP_PSM: u16 = 0x1001;
 /// AirPods service UUID for device identification
 pub const AIRPODS_SERVICE_UUID: &str = "74ec2172-0bad-4d01-8f77-997b2be0722a";
 
-/// Apple vendor ID for BLE manufacturer data
+/// Apple vendor ID for BLE manufacturer data (used in scanning/identification)
+#[allow(dead_code)]
 pub const APPLE_COMPANY_ID: u16 = 0x004C;
 
 /// Common packet header for control commands
@@ -22,6 +23,8 @@ pub const HEADER: [u8; 4] = [0x04, 0x00, 0x04, 0x00];
 pub const CMD_BATTERY: u8 = 0x04;
 pub const CMD_EAR_DETECTION: u8 = 0x06;
 pub const CMD_CONTROL: u8 = 0x09;
+/// Command ID used in SUBSCRIBE_NOTIFICATIONS packet
+#[allow(dead_code)]
 pub const CMD_NOTIFICATION_SUBSCRIBE: u8 = 0x0F;
 pub const CMD_DEVICE_INFO: u8 = 0x1D;
 pub const CMD_CA_ACTIVITY: u8 = 0x4B;
@@ -29,7 +32,11 @@ pub const CMD_CA_ACTIVITY: u8 = 0x4B;
 /// Control sub-commands (byte at offset 6, under CMD_CONTROL)
 pub const SUB_ANC_MODE: u8 = 0x0D;
 pub const SUB_ONE_BUD_ANC: u8 = 0x1B;
+/// Not yet implemented — reserved for future use
+#[allow(dead_code)]
 pub const SUB_VOLUME_SWIPE: u8 = 0x25;
+/// Not yet implemented — reserved for future use
+#[allow(dead_code)]
 pub const SUB_ADAPTIVE_VOLUME: u8 = 0x26;
 pub const SUB_CONVERSATIONAL_AWARENESS: u8 = 0x28;
 pub const SUB_ADAPTIVE_NOISE_LEVEL: u8 = 0x2E;

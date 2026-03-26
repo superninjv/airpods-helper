@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.costa.AirPods
+Exec=%h/.local/bin/airpods-daemon

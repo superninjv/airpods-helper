@@ -1,3 +1,4 @@
+/target/
 /daemon/target/
 *.swp
 *.swo

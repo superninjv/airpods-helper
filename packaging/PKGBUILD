@@ -1,0 +1,57 @@
+# Maintainer: Jack Hernandez <jack@synoros.io>
+pkgname=airpods-helper
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Native AirPods support for Linux — ANC, battery, EQ, ear detection, CLI"
+arch=('x86_64')
+url="https://github.com/superninjv/airpods-helper"
+license=('MIT')
+depends=('bluez' 'dbus' 'pipewire')
+makedepends=('rust' 'cargo')
+optdepends=('ags: GTK4 desktop widgets for bar integration')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/superninjv/$pkgname/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    cargo build --workspace --release
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    cargo test --workspace
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+
+    # Binaries
+    install -Dm755 target/release/airpods-daemon "$pkgdir/usr/bin/airpods-daemon"
+    install -Dm755 target/release/airpods-cli "$pkgdir/usr/bin/airpods-cli"
+
+    # Systemd user service
+    install -Dm644 daemon/airpods-daemon.service "$pkgdir/usr/lib/systemd/user/airpods-daemon.service"
+    # Fix ExecStart path for system install
+    sed -i 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \
+        "$pkgdir/usr/lib/systemd/user/airpods-daemon.service"
+
+    # D-Bus activation
+    install -Dm644 daemon/org.costa.AirPods.service "$pkgdir/usr/share/dbus-1/services/org.costa.AirPods.service"
+    sed -i 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \
+        "$pkgdir/usr/share/dbus-1/services/org.costa.AirPods.service"
+
+    # EQ presets
+    install -dm755 "$pkgdir/usr/share/airpods-helper/eq-presets"
+    install -m644 eq-presets/*.toml "$pkgdir/usr/share/airpods-helper/eq-presets/"
+
+    # Config example
+    install -Dm644 config.example.toml "$pkgdir/usr/share/airpods-helper/config.example.toml"
+
+    # License
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+post_install() {
+    echo ">> Enable the daemon: systemctl --user enable --now airpods-daemon.service"
+    echo ">> Grant capabilities: sudo setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon"
+}

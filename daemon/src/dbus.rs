@@ -164,6 +164,11 @@ impl AirPodsInterface {
         self.state.current().eq_preset.clone()
     }
 
+    #[zbus(property)]
+    fn conversational_activity_state(&self) -> String {
+        self.state.current().conversational_activity.clone()
+    }
+
     // --- EQ Methods ---
 
     async fn set_eq_preset(&self, name: &str) -> zbus::fdo::Result<()> {
@@ -257,6 +262,7 @@ pub async fn emit_properties_changed(connection: &Connection, changed_props: &[&
             "Model" => iface.model_changed(emitter).await,
             "Firmware" => iface.firmware_changed(emitter).await,
             "EqPreset" => iface.eq_preset_changed(emitter).await,
+            "ConversationalActivityState" => iface.conversational_activity_state_changed(emitter).await,
             _ => Ok(()),
         };
         if let Err(e) = result {

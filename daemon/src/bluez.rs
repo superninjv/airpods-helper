@@ -1,8 +1,8 @@
-use bluer::{Adapter, AdapterEvent, Address, Device, Session};
+use bluer::{AdapterEvent, Address, Device, Session};
 use futures::StreamExt;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 /// Events from the BlueZ monitor
 #[derive(Debug)]

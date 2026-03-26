@@ -1,0 +1,326 @@
+/* airpods-helper — default dark theme */
+
+/* ─── Bar button ──────────────────────────────────── */
+
+.airpods-btn {
+  background: transparent;
+  color: #e0e0e0;
+  border: none;
+  padding: 0 8px;
+  font-size: 13px;
+  min-height: 24px;
+}
+
+.airpods-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+
+.airpods-btn.airpods-warn {
+  color: #f0c040;
+}
+
+.airpods-btn.airpods-low {
+  color: #e05050;
+}
+
+/* ─── Popover container ───────────────────────────── */
+
+.ap-popup {
+  padding: 12px;
+  background: #1e1e2e;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ─── Header ──────────────────────────────────────── */
+
+.ap-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ap-header-icon {
+  font-size: 24px;
+  color: #cdd6f4;
+  min-width: 32px;
+}
+
+.ap-header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.ap-header-status {
+  font-size: 11px;
+  color: #a6adc8;
+}
+
+/* ─── Sections ────────────────────────────────────── */
+
+.ap-section {
+  padding: 4px 0;
+}
+
+.ap-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a6adc8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+/* ─── Battery rows ────────────────────────────────── */
+
+.ap-bat-row {
+  min-height: 24px;
+}
+
+.ap-bat-label {
+  font-size: 12px;
+  color: #bac2de;
+  font-weight: 500;
+}
+
+.ap-bat-bar {
+  min-height: 8px;
+  border-radius: 4px;
+}
+
+.ap-bat-bar trough {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  min-height: 8px;
+}
+
+.ap-bat-bar block.filled {
+  border-radius: 4px;
+  min-height: 8px;
+}
+
+.ap-bat-green .ap-bat-bar block.filled {
+  background: #a6e3a1;
+}
+
+.ap-bat-yellow .ap-bat-bar block.filled {
+  background: #f9e2af;
+}
+
+.ap-bat-red .ap-bat-bar block.filled {
+  background: #f38ba8;
+}
+
+.ap-bat-pct {
+  font-size: 12px;
+  color: #bac2de;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── ANC mode selector ──────────────────────────── */
+
+.ap-anc-row {
+  padding: 4px 0;
+}
+
+.ap-anc-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 6px 4px;
+  min-width: 56px;
+}
+
+.ap-anc-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ap-anc-btn.active {
+  background: rgba(137, 180, 250, 0.15);
+  border-color: rgba(137, 180, 250, 0.3);
+}
+
+.ap-anc-icon {
+  font-size: 16px;
+  color: #cdd6f4;
+}
+
+.ap-anc-btn.active .ap-anc-icon {
+  color: #89b4fa;
+}
+
+.ap-anc-label {
+  font-size: 10px;
+  color: #a6adc8;
+}
+
+.ap-anc-btn.active .ap-anc-label {
+  color: #89b4fa;
+}
+
+/* ─── Adaptive noise slider ──────────────────────── */
+
+.ap-noise-row {
+  padding: 4px 0;
+}
+
+.ap-noise-slider trough {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  min-height: 6px;
+}
+
+.ap-noise-slider highlight {
+  background: #89b4fa;
+  border-radius: 4px;
+  min-height: 6px;
+}
+
+.ap-noise-slider slider {
+  background: #cdd6f4;
+  border-radius: 50%;
+  min-width: 14px;
+  min-height: 14px;
+  margin: -4px;
+}
+
+/* ─── Toggle rows ─────────────────────────────────── */
+
+.ap-toggle-label {
+  font-size: 12px;
+  color: #bac2de;
+}
+
+.ap-toggle {
+  min-width: 36px;
+  min-height: 18px;
+}
+
+/* ─── EQ preset buttons ──────────────────────────── */
+
+.ap-eq-row {
+  padding: 4px 0;
+}
+
+.ap-eq-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #bac2de;
+}
+
+.ap-eq-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ap-eq-btn.active {
+  background: rgba(166, 227, 161, 0.15);
+  border-color: rgba(166, 227, 161, 0.3);
+  color: #a6e3a1;
+}
+
+/* ─── Ear status ──────────────────────────────────── */
+
+.ap-ear-row {
+  padding: 4px 0;
+}
+
+.ap-ear {
+  font-size: 12px;
+  color: #a6adc8;
+}
+
+/* ─── Footer ──────────────────────────────────────── */
+
+.ap-footer {
+  font-size: 10px;
+  color: #585b70;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* ─── Connection popup (layer-shell) ──────────────── */
+
+.AirPodsPopup {
+  background: transparent;
+}
+
+.airpods-card {
+  background: #1e1e2e;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  min-width: 280px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.airpods-card-header {
+  padding-bottom: 10px;
+}
+
+.airpods-icon {
+  font-size: 28px;
+  color: #cdd6f4;
+}
+
+.airpods-model {
+  font-size: 15px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.airpods-status {
+  font-size: 12px;
+  color: #a6adc8;
+}
+
+.airpods-batteries {
+  padding: 4px 0;
+}
+
+.airpods-bat-row {
+  min-height: 24px;
+}
+
+.airpods-bat-label {
+  font-size: 12px;
+  color: #bac2de;
+  font-weight: 500;
+}
+
+.airpods-bat-bar {
+  min-height: 8px;
+  border-radius: 4px;
+}
+
+.airpods-bat-bar trough {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  min-height: 8px;
+}
+
+.airpods-bat-bar block.filled {
+  border-radius: 4px;
+  min-height: 8px;
+}
+
+.airpods-bat-green .airpods-bat-bar block.filled {
+  background: #a6e3a1;
+}
+
+.airpods-bat-yellow .airpods-bat-bar block.filled {
+  background: #f9e2af;
+}
+
+.airpods-bat-red .airpods-bat-bar block.filled {
+  background: #f38ba8;
+}
+
+.airpods-bat-pct {
+  font-size: 12px;
+  color: #bac2de;
+  font-variant-numeric: tabular-nums;
+}

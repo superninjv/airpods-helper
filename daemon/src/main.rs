@@ -165,6 +165,9 @@ async fn main() -> anyhow::Result<()> {
                     AapEvent::ConversationalAwareness(_) => {
                         dbus::emit_properties_changed(&connection, &["ConversationalAwareness"]).await;
                     }
+                    AapEvent::ConversationalActivity(_) => {
+                        dbus::emit_properties_changed(&connection, &["ConversationalActivityState"]).await;
+                    }
                     AapEvent::AdaptiveNoiseLevel(_) => {
                         dbus::emit_properties_changed(&connection, &["AdaptiveNoiseLevel"]).await;
                     }

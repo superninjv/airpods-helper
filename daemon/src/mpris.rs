@@ -1,5 +1,5 @@
 use tokio::sync::watch;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use zbus::Connection;
 
 use crate::state::AirPodsState;

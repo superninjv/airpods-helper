@@ -39,6 +39,7 @@ pub struct BatteryUpdate {
 pub struct BatteryEntry {
     pub level: u8,
     pub charging: bool,
+    #[allow(dead_code)] // populated from packet, exposed in future version
     pub connected: bool,
 }
 
@@ -57,9 +58,12 @@ pub enum CaActivity {
 
 #[derive(Debug, Clone)]
 pub struct DeviceInfoUpdate {
+    #[allow(dead_code)] // parsed from packet, exposed in future version
     pub name: String,
     pub model: String,
+    #[allow(dead_code)]
     pub manufacturer: String,
+    #[allow(dead_code)]
     pub serial: String,
     pub firmware: String,
 }
