@@ -1,0 +1,13 @@
+[Unit]
+Description=AirPods Helper Daemon
+After=bluetooth.target dbus.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/airpods-daemon
+Restart=on-failure
+RestartSec=5
+# Capabilities set on binary via: sudo setcap 'cap_net_raw,cap_net_admin+eip' ~/.local/bin/airpods-daemon
+
+[Install]
+WantedBy=default.target

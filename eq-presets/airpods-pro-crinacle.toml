@@ -1,0 +1,33 @@
+name = "AirPods Pro (Crinacle)"
+description = "Crinacle/AutoEQ Harman 2019v2 IEM target"
+preamp = -3.2
+
+[[bands]]
+type = "peaking"
+freq = 25.0
+q = 0.7
+gain = 1.1
+
+[[bands]]
+type = "peaking"
+freq = 501.0
+q = 1.2
+gain = -3.6
+
+[[bands]]
+type = "peaking"
+freq = 860.0
+q = 1.0
+gain = 3.1
+
+[[bands]]
+type = "peaking"
+freq = 1993.0
+q = 2.0
+gain = -2.4
+
+[[bands]]
+type = "peaking"
+freq = 5600.0
+q = 1.5
+gain = 2.2
