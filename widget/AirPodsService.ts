@@ -130,8 +130,8 @@ function connectProxy() {
       "g-signal",
       (_proxy: Gio.DBusProxy, _sender: string | null, signalName: string, params: GLib.Variant) => {
         if (signalName === "DeviceConnected") {
-          // Trigger connection popup
-          const model = params.deepUnpack<[string]>()[0]
+          const unpacked = params.deepUnpack<unknown[]>()
+          const model = Array.isArray(unpacked) && typeof unpacked[0] === "string" ? unpacked[0] : ""
           onDeviceConnected(model)
         } else if (signalName === "DeviceDisconnected") {
           onDeviceDisconnected()

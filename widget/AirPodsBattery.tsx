@@ -165,17 +165,11 @@ export default function AirPodsBattery() {
   const caRow = new Gtk.Box({ spacing: 8 })
   caRow.append(new Gtk.Label({ label: "Conversational Awareness", hexpand: true, xalign: 0, cssClasses: ["ap-toggle-label"] }))
   const caSwitch = new Gtk.Switch({ cssClasses: ["ap-toggle"] })
-  caSwitch.connect("notify::active", () => {
-    call("SetConversationalAwareness", new GLib.Variant("(b)", [caSwitch.active]))
-  })
   caRow.append(caSwitch)
 
   const obRow = new Gtk.Box({ spacing: 8 })
   obRow.append(new Gtk.Label({ label: "One-Bud ANC", hexpand: true, xalign: 0, cssClasses: ["ap-toggle-label"] }))
   const obSwitch = new Gtk.Switch({ cssClasses: ["ap-toggle"] })
-  obSwitch.connect("notify::active", () => {
-    call("SetOneBudAnc", new GLib.Variant("(b)", [obSwitch.active]))
-  })
   obRow.append(obSwitch)
 
   togglesBox.append(caRow)
