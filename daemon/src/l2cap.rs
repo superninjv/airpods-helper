@@ -36,7 +36,7 @@ pub async fn run(
     let mut seq: Option<SeqPacket> = None;
     for attempt in 1..=5 {
         let socket = Socket::new_seq_packet()?;
-        let addr = SocketAddr::new(address, bluer::AddressType::BrEdr, aap::AAP_PSM.into());
+        let addr = SocketAddr::new(address, bluer::AddressType::BrEdr, aap::AAP_PSM);
         match socket.connect(addr).await {
             Ok(s) => {
                 seq = Some(s);

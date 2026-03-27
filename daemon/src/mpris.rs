@@ -33,21 +33,19 @@ pub async fn watch_ear_detection(mut state_rx: watch::Receiver<AirPodsState>) {
         let in_ear = state.ear_left || state.ear_right;
 
         // Transition: was in ear -> no longer in ear = pause
-        if was_in_ear && !in_ear {
-            if let Some(player) = find_playing_player(&conn).await {
+        if was_in_ear && !in_ear
+            && let Some(player) = find_playing_player(&conn).await {
                 info!("ear detection: pausing {player}");
                 let _ = call_mpris(&conn, &player, "Pause").await;
                 paused_player = Some(player);
             }
-        }
 
         // Transition: was not in ear -> now in ear = resume
-        if !was_in_ear && in_ear {
-            if let Some(player) = paused_player.take() {
+        if !was_in_ear && in_ear
+            && let Some(player) = paused_player.take() {
                 info!("ear detection: resuming {player}");
                 let _ = call_mpris(&conn, &player, "Play").await;
             }
-        }
 
         was_in_ear = in_ear;
     }
@@ -74,11 +72,10 @@ async fn find_playing_player(conn: &Connection) -> Option<String> {
         .await
         .ok()?;
 
-        if let Ok(status) = player_proxy.get_property::<String>("PlaybackStatus").await {
-            if status == "Playing" {
+        if let Ok(status) = player_proxy.get_property::<String>("PlaybackStatus").await
+            && status == "Playing" {
                 return Some(name_str.to_string());
             }
-        }
     }
 
     None

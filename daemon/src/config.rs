@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub device: DeviceConfig,
@@ -13,7 +13,7 @@ pub struct Config {
     pub reconnect: ReconnectConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeviceConfig {
     /// Bluetooth address (auto-detected if not set)
     pub address: Option<String>,
@@ -63,15 +63,6 @@ fn default_max_retries() -> u32 {
     3
 }
 
-impl Default for DeviceConfig {
-    fn default() -> Self {
-        Self {
-            address: None,
-            name: None,
-        }
-    }
-}
-
 impl Default for EqConfig {
     fn default() -> Self {
         Self {
@@ -95,17 +86,6 @@ impl Default for ReconnectConfig {
         Self {
             auto_reconnect: true,
             max_retries: default_max_retries(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            device: DeviceConfig::default(),
-            eq: EqConfig::default(),
-            ear_detection: EarDetectionConfig::default(),
-            reconnect: ReconnectConfig::default(),
         }
     }
 }

@@ -103,7 +103,7 @@ mod win {
     fn bt_connect(addr: BtAddr, psm: u16) -> io::Result<SOCKET> {
         unsafe {
             let sock = socket(AF_BTH as i32, SOCK_STREAM, BTHPROTO_L2CAP as i32)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
             if sock.is_invalid() {
                 return Err(io::Error::last_os_error());
             }
