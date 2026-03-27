@@ -83,8 +83,8 @@ mod win {
         AF_BTH, BTHPROTO_L2CAP, SOCKADDR_BTH,
     };
     use windows::Win32::Networking::WinSock::{
-        closesocket, connect, recv, send, socket, WSACleanup, WSAStartup, SOCK_STREAM, SOCKET,
-        WSADATA,
+        closesocket, connect, recv, send, socket, WSACleanup, WSAStartup, SEND_RECV_FLAGS,
+        SOCK_STREAM, SOCKET, WSADATA,
     };
 
     /// Initialize Winsock
@@ -102,7 +102,8 @@ mod win {
     /// Create an L2CAP Bluetooth socket and connect to the given address + PSM
     fn bt_connect(addr: BtAddr, psm: u16) -> io::Result<SOCKET> {
         unsafe {
-            let sock = socket(AF_BTH as i32, SOCK_STREAM.0, BTHPROTO_L2CAP as i32);
+            let sock = socket(AF_BTH as i32, SOCK_STREAM, BTHPROTO_L2CAP as i32)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
             if sock.is_invalid() {
                 return Err(io::Error::last_os_error());
             }
@@ -129,7 +130,7 @@ mod win {
     /// Send data over the Bluetooth socket
     fn bt_send(sock: SOCKET, data: &[u8]) -> io::Result<usize> {
         unsafe {
-            let n = send(sock, data, 0);
+            let n = send(sock, data, SEND_RECV_FLAGS(0));
             if n < 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -140,7 +141,7 @@ mod win {
     /// Receive data from the Bluetooth socket
     fn bt_recv(sock: SOCKET, buf: &mut [u8]) -> io::Result<usize> {
         unsafe {
-            let n = recv(sock, buf, 0);
+            let n = recv(sock, buf, SEND_RECV_FLAGS(0));
             if n < 0 {
                 return Err(io::Error::last_os_error());
             }
