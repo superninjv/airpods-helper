@@ -67,11 +67,10 @@ impl EqPreset {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if path.extension().and_then(|s| s.to_str()) == Some("toml")
+                        && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                             names.insert(stem.to_string());
                         }
-                    }
                 }
             }
         }

@@ -60,6 +60,7 @@ pub fn set_one_bud_anc(enabled: bool) -> [u8; 11] {
 /// Set which listening modes are available in the rotation.
 /// Bitmask: 0x01=Off, 0x02=Noise, 0x04=Transparency, 0x08=Adaptive
 /// 0x0F = all modes enabled
+#[allow(dead_code)]
 pub fn set_listening_mode_configs(modes: u8) -> [u8; 11] {
     control_command(0x1A, modes)
 }

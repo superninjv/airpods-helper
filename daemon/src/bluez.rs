@@ -22,13 +22,12 @@ pub async fn monitor(tx: mpsc::Sender<BlueZEvent>) -> bluer::Result<()> {
     // Check already-connected devices on startup
     let addrs = adapter.device_addresses().await?;
     for addr in addrs {
-        if let Ok(device) = adapter.device(addr) {
-            if device.is_connected().await.unwrap_or(false) && is_airpods(&device).await {
+        if let Ok(device) = adapter.device(addr)
+            && device.is_connected().await.unwrap_or(false) && is_airpods(&device).await {
                 info!("found already-connected AirPods: {addr}");
                 known_connected.insert(addr);
                 let _ = tx.send(BlueZEvent::AirPodsConnected(addr)).await;
             }
-        }
     }
 
     // Watch for device events (DeviceAdded fires on property changes too with discover_devices_with_changes)
@@ -86,11 +85,10 @@ async fn is_airpods(device: &Device) -> bool {
     }
 
     // Fallback: check device name
-    if let Ok(Some(name)) = device.name().await {
-        if name.contains("AirPods") {
+    if let Ok(Some(name)) = device.name().await
+        && name.contains("AirPods") {
             return true;
         }
-    }
 
     false
 }
