@@ -5,7 +5,7 @@ pub mod parser;
 ///
 /// Transport: L2CAP, PSM 0x1001 (4097)
 /// All control packets share header: 04 00 04 00 [cmd] 00 [payload]
-
+///
 /// L2CAP PSM for AAP control channel
 pub const AAP_PSM: u16 = 0x1001;
 
@@ -22,23 +22,33 @@ pub const HEADER: [u8; 4] = [0x04, 0x00, 0x04, 0x00];
 pub const CMD_BATTERY: u8 = 0x04;
 pub const CMD_EAR_DETECTION: u8 = 0x06;
 pub const CMD_CONTROL: u8 = 0x09;
+pub const CMD_AUDIO_SOURCE: u8 = 0x0E;
 /// Command ID used in SUBSCRIBE_NOTIFICATIONS packet
 #[allow(dead_code)]
 pub const CMD_NOTIFICATION_SUBSCRIBE: u8 = 0x0F;
+pub const CMD_HEAD_TRACKING: u8 = 0x17;
+pub const CMD_STEM_PRESS: u8 = 0x19;
 pub const CMD_DEVICE_INFO: u8 = 0x1D;
+pub const CMD_CONNECTED_DEVICES: u8 = 0x2E;
 pub const CMD_CA_ACTIVITY: u8 = 0x4B;
+pub const CMD_EQ_DATA: u8 = 0x53;
 
 /// Control sub-commands (byte at offset 6, under CMD_CONTROL)
 pub const SUB_ANC_MODE: u8 = 0x0D;
+pub const SUB_DOUBLE_CLICK_INTERVAL: u8 = 0x17;
+pub const SUB_CLICK_HOLD_INTERVAL: u8 = 0x18;
 pub const SUB_ONE_BUD_ANC: u8 = 0x1B;
-/// Not yet implemented — reserved for future use
-#[allow(dead_code)]
+pub const SUB_CHIME_VOLUME: u8 = 0x1F;
+pub const SUB_VOLUME_SWIPE_INTERVAL: u8 = 0x23;
+pub const SUB_CALL_MANAGEMENT: u8 = 0x24;
 pub const SUB_VOLUME_SWIPE: u8 = 0x25;
-/// Not yet implemented — reserved for future use
-#[allow(dead_code)]
 pub const SUB_ADAPTIVE_VOLUME: u8 = 0x26;
 pub const SUB_CONVERSATIONAL_AWARENESS: u8 = 0x28;
+pub const SUB_HEARING_AID: u8 = 0x2C;
 pub const SUB_ADAPTIVE_NOISE_LEVEL: u8 = 0x2E;
+pub const SUB_GAIN_SWIPE: u8 = 0x2F;
+pub const SUB_HEARING_ASSIST: u8 = 0x33;
+pub const SUB_SLEEP_DETECTION: u8 = 0x35;
 
 /// ANC mode values (byte at offset 7)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]

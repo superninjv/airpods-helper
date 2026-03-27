@@ -24,6 +24,7 @@ pub struct DiscoveredDevice {
     /// Device name (if available)
     pub name: Option<String>,
     /// The btleplug peripheral handle (needed for GATT, not for L2CAP)
+    #[allow(dead_code)]
     pub peripheral: Peripheral,
 }
 
@@ -56,12 +57,11 @@ pub async fn scan_for_airpods(adapter: &Adapter, timeout: Duration) -> Result<Di
 
     let scan_result = tokio::time::timeout(timeout, async {
         while let Some(event) = events.next().await {
-            if let CentralEvent::DeviceDiscovered(id) = event {
-                if let Ok(peripheral) = adapter.peripheral(&id).await {
-                    if let Some(device) = check_peripheral(&peripheral, airpods_uuid).await {
-                        return Some(device);
-                    }
-                }
+            if let CentralEvent::DeviceDiscovered(id) = event
+                && let Ok(peripheral) = adapter.peripheral(&id).await
+                && let Some(device) = check_peripheral(&peripheral, airpods_uuid).await
+            {
+                return Some(device);
             }
         }
         None
