@@ -60,8 +60,8 @@ impl BtAddr {
 
     /// Convert to u64 for SOCKADDR_BTH.btAddr (little-endian 6-byte address in u64)
     #[cfg(target_os = "windows")]
-    pub fn to_u64(&self) -> u64 {
-        let b = &self.0;
+    pub fn to_u64(self) -> u64 {
+        let b = self.0;
         (b[5] as u64) << 40
             | (b[4] as u64) << 32
             | (b[3] as u64) << 24
