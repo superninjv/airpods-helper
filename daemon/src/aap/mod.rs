@@ -5,7 +5,6 @@ pub mod parser;
 ///
 /// Transport: L2CAP, PSM 0x1001 (4097)
 /// All control packets share header: 04 00 04 00 [cmd] 00 [payload]
-
 /// L2CAP PSM for AAP control channel
 pub const AAP_PSM: u16 = 0x1001;
 
