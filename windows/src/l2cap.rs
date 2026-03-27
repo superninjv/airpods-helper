@@ -109,7 +109,7 @@ mod win {
             }
 
             let mut sockaddr: SOCKADDR_BTH = mem::zeroed();
-            sockaddr.addressFamily = AF_BTH as u16;
+            sockaddr.addressFamily = AF_BTH;
             sockaddr.btAddr = addr.to_u64();
             sockaddr.port = psm as u32;
 
@@ -179,7 +179,7 @@ mod win {
             Err(last_err.unwrap())
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+        .map_err(|e| io::Error::other(e))??;
 
         info!("L2CAP connected via Winsock, performing handshake");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -188,7 +188,7 @@ mod win {
         let sock_clone = sock;
         tokio::task::spawn_blocking(move || bt_send(sock_clone, &aap::commands::HANDSHAKE))
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+            .map_err(|e| io::Error::other(e))??;
         debug!("sent handshake");
 
         let sock_clone = sock;
@@ -198,7 +198,7 @@ mod win {
             Ok::<_, io::Error>(buf[..n].to_vec())
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+        .map_err(|e| io::Error::other(e))??;
 
         match parser::parse(&ack) {
             Ok(AapEvent::HandshakeAck) => debug!("handshake ACK received"),
@@ -209,7 +209,7 @@ mod win {
         let sock_clone = sock;
         tokio::task::spawn_blocking(move || bt_send(sock_clone, &aap::commands::SET_FEATURES))
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+            .map_err(|e| io::Error::other(e))??;
         debug!("sent feature enable");
 
         let sock_clone = sock;
@@ -219,7 +219,7 @@ mod win {
             Ok::<_, io::Error>(buf[..n].to_vec())
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+        .map_err(|e| io::Error::other(e))??;
 
         match parser::parse(&features_ack) {
             Ok(AapEvent::FeaturesAck) => debug!("features ACK received"),
@@ -232,7 +232,7 @@ mod win {
             bt_send(sock_clone, &aap::commands::SUBSCRIBE_NOTIFICATIONS)
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+        .map_err(|e| io::Error::other(e))??;
         debug!("sent notification subscribe");
 
         // Enable all listening modes (Off + Noise + Transparency + Adaptive)
@@ -241,7 +241,7 @@ mod win {
             bt_send(sock_clone, &aap::commands::ENABLE_ALL_LISTENING_MODES)
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+        .map_err(|e| io::Error::other(e))??;
         debug!("enabled all listening modes");
 
         state.update(|s| s.connected = true);
