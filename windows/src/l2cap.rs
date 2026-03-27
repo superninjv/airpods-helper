@@ -18,10 +18,12 @@
 
 use std::io;
 use tokio::sync::mpsc;
+#[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
 
 use crate::aap;
-use crate::aap::parser::{self, AapEvent, CaActivity};
+#[allow(unused_imports)]
+use crate::aap::parser::{self, AapEvent, AudioSource, CaActivity};
 use crate::state::SharedState;
 
 /// Commands that can be sent to the AirPods over L2CAP
@@ -32,6 +34,7 @@ pub enum L2capCommand {
     SetConversationalAwareness(bool),
     SetAdaptiveNoiseLevel(u8),
     SetOneBudAnc(bool),
+    SetVolumeSwipe(bool),
     Disconnect,
 }
 
@@ -231,6 +234,15 @@ mod win {
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
         debug!("sent notification subscribe");
 
+        // Enable all listening modes (Off + Noise + Transparency + Adaptive)
+        let sock_clone = sock;
+        tokio::task::spawn_blocking(move || {
+            bt_send(sock_clone, &aap::commands::ENABLE_ALL_LISTENING_MODES)
+        })
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+        debug!("enabled all listening modes");
+
         state.update(|s| s.connected = true);
         info!("handshake complete, entering main loop");
 
@@ -292,6 +304,11 @@ mod win {
                         }
                         Some(L2capCommand::SetOneBudAnc(enabled)) => {
                             let pkt = aap::commands::set_one_bud_anc(enabled);
+                            let s = sock;
+                            let _ = tokio::task::spawn_blocking(move || bt_send(s, &pkt)).await;
+                        }
+                        Some(L2capCommand::SetVolumeSwipe(enabled)) => {
+                            let pkt = aap::commands::set_volume_swipe(enabled);
                             let s = sock;
                             let _ = tokio::task::spawn_blocking(move || bt_send(s, &pkt)).await;
                         }
@@ -373,6 +390,26 @@ pub async fn run(
     }
 }
 
+/// Map Apple model numbers to human-readable product names.
+fn model_display_name(model_number: &str) -> &str {
+    match model_number {
+        "A1523" | "A1722" => "AirPods 1",
+        "A2031" | "A2032" => "AirPods 2",
+        "A2564" | "A2565" => "AirPods 3",
+        "A3050" | "A3053" | "A3054" | "A3058" => "AirPods 4",
+        "A3055" | "A3056" | "A3057" | "A3059" => "AirPods 4 ANC",
+        "A2083" | "A2084" | "A2190" => "AirPods Pro",
+        "A2698" | "A2699" | "A2700" | "A2931" => "AirPods Pro 2",
+        "A2968" | "A3047" | "A3048" | "A3049" => "AirPods Pro 2",
+        "A3063" | "A3064" | "A3065" | "A3122" => "AirPods Pro 3",
+        "A2096" => "AirPods Max",
+        "A3184" => "AirPods Max 2",
+        "A1602" | "A1938" => "AirPods Case",
+        "A2566" | "A2897" => "AirPods 3 Case",
+        _ => model_number,
+    }
+}
+
 /// Apply a parsed AAP event to the shared state
 #[allow(dead_code)]
 pub fn apply_event(state: &SharedState, event: &AapEvent) {
@@ -387,7 +424,9 @@ pub fn apply_event(state: &SharedState, event: &AapEvent) {
                     s.battery_right = right.level as i32;
                     s.charging_right = right.charging;
                 }
-                if let Some(case) = &b.case {
+                if let Some(case) = &b.case
+                    && (case.level > 0 || case.charging)
+                {
                     s.battery_case = case.level as i32;
                     s.charging_case = case.charging;
                 }
@@ -397,9 +436,10 @@ pub fn apply_event(state: &SharedState, event: &AapEvent) {
             state.update(|s| s.anc_mode = *mode);
         }
         AapEvent::EarDetection(ed) => {
+            // AAP primary = right bud (controller), secondary = left
             state.update(|s| {
-                s.ear_left = ed.primary.is_in_ear();
-                s.ear_right = ed.secondary.is_in_ear();
+                s.ear_left = ed.secondary.is_in_ear();
+                s.ear_right = ed.primary.is_in_ear();
             });
         }
         AapEvent::ConversationalAwareness(enabled) => {
@@ -419,9 +459,29 @@ pub fn apply_event(state: &SharedState, event: &AapEvent) {
         AapEvent::OneBudAnc(enabled) => {
             state.update(|s| s.one_bud_anc = *enabled);
         }
+        AapEvent::VolumeSwipe(enabled) => {
+            state.update(|s| s.volume_swipe = *enabled);
+        }
+        AapEvent::AdaptiveVolume(enabled) => {
+            state.update(|s| s.adaptive_volume = *enabled);
+        }
+        AapEvent::ChimeVolume(level) => {
+            state.update(|s| s.chime_volume = *level);
+        }
+        AapEvent::AudioSource(source) => {
+            let value = match source {
+                AudioSource::None => "none",
+                AudioSource::Call => "call",
+                AudioSource::Media => "media",
+                AudioSource::Unknown(_) => "unknown",
+            };
+            state.update(|s| s.audio_source = value.to_string());
+        }
         AapEvent::DeviceInfo(info) => {
+            let display_name = model_display_name(&info.model).to_string();
             state.update(|s| {
                 s.model = info.model.clone();
+                s.model_name = display_name;
                 s.firmware = info.firmware.clone();
             });
         }

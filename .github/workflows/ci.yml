@@ -91,3 +91,68 @@ jobs:
         with:
           name: airpods-cli-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/airpods-cli
+
+  windows-check:
+    name: Windows Check & Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            windows\target
+          key: windows-cargo-${{ hashFiles('windows/Cargo.lock') }}
+          restore-keys: |
+            windows-cargo-
+
+      - name: cargo check (windows crate)
+        working-directory: windows
+        run: cargo check
+
+      - name: cargo test (windows crate)
+        working-directory: windows
+        run: cargo test
+
+      - name: cargo clippy (windows crate)
+        working-directory: windows
+        run: cargo clippy -- -D warnings
+
+  windows-build:
+    name: Build Windows release
+    runs-on: windows-latest
+    needs: windows-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            windows\target
+          key: windows-cargo-${{ hashFiles('windows/Cargo.lock') }}
+          restore-keys: |
+            windows-cargo-
+
+      - name: Build release
+        working-directory: windows
+        run: cargo build --release
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: airpods-windows-x86_64
+          path: windows/target/release/airpods-windows.exe

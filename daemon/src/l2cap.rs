@@ -128,6 +128,20 @@ pub async fn run(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(L2capCommand::SetAncMode(mode)) => {
+                        // AirPods Pro 2 may have "Off" removed from the listening
+                        // mode rotation (via iPhone settings synced through iCloud).
+                        // The firmware rejects the Off command if it's not in the
+                        // allowed set. Re-send the listening mode config before
+                        // switching to Off to ensure it's permitted.
+                        if mode == aap::AncMode::Off {
+                            debug!("re-enabling Off in listening mode rotation before switching");
+                            if let Err(e) = seq.send(&aap::commands::ENABLE_ALL_LISTENING_MODES).await {
+                                error!("failed to send listening mode config: {e}");
+                            }
+                            // Small delay to let the firmware process the config
+                            // before we send the actual mode change
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
                         let pkt = aap::commands::set_anc_mode(mode);
                         debug!("sending ANC mode {:?}: {:02X?}", mode, pkt);
                         if let Err(e) = seq.send(&pkt).await {

@@ -258,13 +258,124 @@ async fn connect_l2cap(
     Err("L2CAP connect failed after 5 attempts".to_string())
 }
 
-/// Windows stub -- L2CAP via Winsock is in windows/src/l2cap.rs, to be integrated later
+/// Windows stub -- polls the standalone airpods-windows daemon's HTTP API for state.
+///
+/// The Tauri app on Windows does not embed its own L2CAP connection. Instead, it expects
+/// the standalone `airpods-windows daemon` to be running on localhost:7654. This stub
+/// polls the daemon's HTTP API and mirrors state into the Tauri shared state so the
+/// frontend UI works identically.
+///
+/// To use the Tauri app on Windows:
+///   1. Start the daemon: `airpods-windows daemon`
+///   2. Launch the Tauri app -- it will poll the daemon's HTTP API automatically
 #[cfg(target_os = "windows")]
 async fn run_once(state: SharedState, cmd_sender: CommandSender) -> Result<(), String> {
-    info!("Windows L2CAP support not yet integrated into Tauri app");
-    info!("waiting indefinitely -- connect via the windows/ crate separately");
-    // Sleep forever until the feature is ported
-    tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;
+    use crate::aap::AncMode;
+
+    const API_BASE: &str = "http://127.0.0.1:7654";
+    let client = reqwest::Client::new();
+
+    info!("Windows mode: polling airpods-windows daemon at {API_BASE}");
+    info!("make sure `airpods-windows daemon` is running");
+
+    // Create command channel -- forward commands to the HTTP API
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<DaemonCommand>(32);
+    {
+        let mut sender = cmd_sender.lock().await;
+        *sender = Some(cmd_tx);
+    }
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                // Poll status from the standalone daemon
+                match client.get(format!("{API_BASE}/status")).send().await {
+                    Ok(resp) => {
+                        if let Ok(json) = resp.json::<serde_json::Value>().await {
+                            let connected = json["connected"].as_bool().unwrap_or(false);
+                            state.update(|s| {
+                                s.connected = connected;
+                                if connected {
+                                    s.battery_left = json["battery_left"].as_i64().unwrap_or(-1) as i32;
+                                    s.battery_right = json["battery_right"].as_i64().unwrap_or(-1) as i32;
+                                    s.battery_case = json["battery_case"].as_i64().unwrap_or(-1) as i32;
+                                    s.charging_left = json["charging_left"].as_bool().unwrap_or(false);
+                                    s.charging_right = json["charging_right"].as_bool().unwrap_or(false);
+                                    s.charging_case = json["charging_case"].as_bool().unwrap_or(false);
+                                    s.anc_mode = json["anc_mode"].as_str().unwrap_or("off").to_string();
+                                    s.ear_left = json["ear_left"].as_bool().unwrap_or(false);
+                                    s.ear_right = json["ear_right"].as_bool().unwrap_or(false);
+                                    s.conversational_awareness = json["conversational_awareness"].as_bool().unwrap_or(false);
+                                    s.adaptive_noise_level = json["adaptive_noise_level"].as_u64().unwrap_or(50) as u8;
+                                    s.one_bud_anc = json["one_bud_anc"].as_bool().unwrap_or(true);
+                                    s.volume_swipe = json["volume_swipe"].as_bool().unwrap_or(true);
+                                    if let Some(model) = json["model"].as_str() {
+                                        s.model = model.to_string();
+                                    }
+                                    if let Some(model_name) = json["model_name"].as_str() {
+                                        s.model_name = model_name.to_string();
+                                    }
+                                    if let Some(firmware) = json["firmware"].as_str() {
+                                        s.firmware = firmware.to_string();
+                                    }
+                                    if let Some(audio_source) = json["audio_source"].as_str() {
+                                        s.audio_source = audio_source.to_string();
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    Err(_) => {
+                        // Daemon not running -- mark disconnected
+                        if state.current().connected {
+                            state.update(|s| s.connected = false);
+                            warn!("lost connection to airpods-windows daemon");
+                        }
+                    }
+                }
+            }
+            cmd = cmd_rx.recv() => {
+                // Forward commands to the daemon's HTTP API
+                match cmd {
+                    Some(DaemonCommand::SetAncMode(mode)) => {
+                        let _ = client.post(format!("{API_BASE}/anc"))
+                            .json(&serde_json::json!({ "mode": mode.as_str() }))
+                            .send().await;
+                    }
+                    Some(DaemonCommand::SetConversationalAwareness(enabled)) => {
+                        let _ = client.post(format!("{API_BASE}/ca"))
+                            .json(&serde_json::json!({ "enabled": enabled }))
+                            .send().await;
+                    }
+                    Some(DaemonCommand::SetAdaptiveNoiseLevel(level)) => {
+                        let _ = client.post(format!("{API_BASE}/noise"))
+                            .json(&serde_json::json!({ "level": level }))
+                            .send().await;
+                    }
+                    Some(DaemonCommand::SetOneBudAnc(enabled)) => {
+                        let _ = client.post(format!("{API_BASE}/one-bud-anc"))
+                            .json(&serde_json::json!({ "enabled": enabled }))
+                            .send().await;
+                    }
+                    Some(DaemonCommand::SetVolumeSwipe(enabled)) => {
+                        let _ = client.post(format!("{API_BASE}/volume-swipe"))
+                            .json(&serde_json::json!({ "enabled": enabled }))
+                            .send().await;
+                    }
+                    Some(DaemonCommand::Disconnect) | None => {
+                        info!("disconnect requested");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        let mut sender = cmd_sender.lock().await;
+        *sender = None;
+    }
+    state.reset();
     Ok(())
 }
 

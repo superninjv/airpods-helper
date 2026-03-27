@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a2a3a"/>
+      <stop offset="100%" stop-color="#1a1a28"/>
+    </linearGradient>
+    <linearGradient id="bud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d8d8dc"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#bg)" stroke="#3a3a50" stroke-width="4"/>
+
+  <!-- Left AirPod -->
+  <g filter="url(#shadow)" transform="translate(120, 100)">
+    <!-- Earbud body -->
+    <ellipse cx="65" cy="80" rx="52" ry="58" fill="url(#bud)"/>
+    <!-- Speaker grille hint -->
+    <ellipse cx="58" cy="68" rx="18" ry="20" fill="#c8c8cc" opacity="0.5"/>
+    <!-- Stem -->
+    <rect x="48" y="120" width="22" height="110" rx="11" fill="url(#bud)"/>
+    <!-- Stem tip -->
+    <ellipse cx="59" cy="232" rx="13" ry="6" fill="#d0d0d4"/>
+    <!-- Sensor dot -->
+    <circle cx="65" cy="95" r="4" fill="#b0b0b8"/>
+  </g>
+
+  <!-- Right AirPod (mirrored) -->
+  <g filter="url(#shadow)" transform="translate(392, 100) scale(-1, 1)">
+    <!-- Earbud body -->
+    <ellipse cx="65" cy="80" rx="52" ry="58" fill="url(#bud)"/>
+    <!-- Speaker grille hint -->
+    <ellipse cx="58" cy="68" rx="18" ry="20" fill="#c8c8cc" opacity="0.5"/>
+    <!-- Stem -->
+    <rect x="48" y="120" width="22" height="110" rx="11" fill="url(#bud)"/>
+    <!-- Stem tip -->
+    <ellipse cx="59" cy="232" rx="13" ry="6" fill="#d0d0d4"/>
+    <!-- Sensor dot -->
+    <circle cx="65" cy="95" r="4" fill="#b0b0b8"/>
+  </g>
+
+  <!-- Subtle bluetooth wave between buds -->
+  <g opacity="0.25" stroke="#7090ff" stroke-width="2.5" fill="none" transform="translate(256, 180)">
+    <path d="M-8,-20 L8,0 L-8,20 M8,-20 L-8,0 L8,20"/>
+  </g>
+</svg>

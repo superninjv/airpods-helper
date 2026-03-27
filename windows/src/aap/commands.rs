@@ -1,12 +1,12 @@
 use super::*;
 
-/// Handshake packet — must be sent first after L2CAP connection
+/// Handshake packet -- must be sent first after L2CAP connection
 pub const HANDSHAKE: [u8; 16] = [
     0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00,
 ];
 
-/// Feature enable packet — enables conversational awareness during playback + adaptive transparency
+/// Feature enable packet -- enables conversational awareness during playback + adaptive transparency
 pub const SET_FEATURES: [u8; 14] = [
     0x04, 0x00, 0x04, 0x00, 0x4D, 0x00, 0xD7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -14,6 +14,13 @@ pub const SET_FEATURES: [u8; 14] = [
 /// Subscribe to all notification types (battery, ear detection, ANC, etc.)
 pub const SUBSCRIBE_NOTIFICATIONS: [u8; 10] = [
     0x04, 0x00, 0x04, 0x00, 0x0F, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+];
+
+/// Enable all listening modes (Off + Noise + Transparency + Adaptive)
+pub const ENABLE_ALL_LISTENING_MODES: [u8; 11] = [
+    HEADER[0], HEADER[1], HEADER[2], HEADER[3],
+    CMD_CONTROL, 0x00,
+    0x1A, 0x0F, 0x00, 0x00, 0x00,
 ];
 
 /// Build a control command packet
@@ -55,6 +62,11 @@ pub fn set_adaptive_noise_level(level: u8) -> [u8; 11] {
 /// Enable or disable ANC when wearing a single AirPod
 pub fn set_one_bud_anc(enabled: bool) -> [u8; 11] {
     control_command(SUB_ONE_BUD_ANC, if enabled { 0x01 } else { 0x02 })
+}
+
+/// Enable or disable volume swipe
+pub fn set_volume_swipe(enabled: bool) -> [u8; 11] {
+    control_command(SUB_VOLUME_SWIPE, if enabled { 0x01 } else { 0x02 })
 }
 
 #[cfg(test)]
@@ -117,8 +129,26 @@ mod tests {
     }
 
     #[test]
+    fn test_set_volume_swipe() {
+        let enable = set_volume_swipe(true);
+        assert_eq!(enable[6], 0x25);
+        assert_eq!(enable[7], 0x01);
+
+        let disable = set_volume_swipe(false);
+        assert_eq!(disable[7], 0x02);
+    }
+
+    #[test]
     fn test_subscribe_notifications() {
         assert_eq!(SUBSCRIBE_NOTIFICATIONS.len(), 10);
         assert_eq!(SUBSCRIBE_NOTIFICATIONS[4], 0x0F);
+    }
+
+    #[test]
+    fn test_enable_all_listening_modes() {
+        assert_eq!(ENABLE_ALL_LISTENING_MODES.len(), 11);
+        assert_eq!(ENABLE_ALL_LISTENING_MODES[4], CMD_CONTROL);
+        assert_eq!(ENABLE_ALL_LISTENING_MODES[6], 0x1A);
+        assert_eq!(ENABLE_ALL_LISTENING_MODES[7], 0x0F);
     }
 }

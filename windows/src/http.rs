@@ -5,12 +5,13 @@
 //!
 //! ## Endpoints
 //!
-//! - `GET  /status`          — full state JSON
-//! - `GET  /battery`         — battery levels + charging status
-//! - `POST /anc`             — set ANC mode (body: `{"mode": "off|noise|transparency|adaptive"}`)
-//! - `POST /ca`              — set CA (body: `{"enabled": true|false}`)
-//! - `POST /noise`           — set adaptive noise level (body: `{"level": 0-100}`)
-//! - `POST /one-bud-anc`     — set one-bud ANC (body: `{"enabled": true|false}`)
+//! - `GET  /status`          -- full state JSON
+//! - `GET  /battery`         -- battery levels + charging status
+//! - `POST /anc`             -- set ANC mode (body: `{"mode": "off|noise|transparency|adaptive"}`)
+//! - `POST /ca`              -- set CA (body: `{"enabled": true|false}`)
+//! - `POST /noise`           -- set adaptive noise level (body: `{"level": 0-100}`)
+//! - `POST /one-bud-anc`     -- set one-bud ANC (body: `{"enabled": true|false}`)
+//! - `POST /volume-swipe`    -- set volume swipe (body: `{"enabled": true|false}`)
 
 use axum::{
     Json, Router,
@@ -48,6 +49,7 @@ pub async fn serve(state: SharedState, cmd_tx: SharedCmdTx) -> anyhow::Result<()
         .route("/ca", post(post_ca))
         .route("/noise", post(post_noise))
         .route("/one-bud-anc", post(post_one_bud_anc))
+        .route("/volume-swipe", post(post_volume_swipe))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:7654").await?;
@@ -65,6 +67,7 @@ async fn get_status(State(app): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "connected": s.connected,
         "model": s.model,
+        "model_name": s.model_name,
         "firmware": s.firmware,
         "battery_left": s.battery_left,
         "battery_right": s.battery_right,
@@ -79,6 +82,10 @@ async fn get_status(State(app): State<AppState>) -> Json<serde_json::Value> {
         "conversational_activity": s.conversational_activity,
         "adaptive_noise_level": s.adaptive_noise_level,
         "one_bud_anc": s.one_bud_anc,
+        "volume_swipe": s.volume_swipe,
+        "adaptive_volume": s.adaptive_volume,
+        "chime_volume": s.chime_volume,
+        "audio_source": s.audio_source,
     }))
 }
 
@@ -158,6 +165,14 @@ async fn post_one_bud_anc(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     send_command(&app.cmd_tx, L2capCommand::SetOneBudAnc(req.enabled)).await?;
     Ok(Json(serde_json::json!({ "one_bud_anc": req.enabled })))
+}
+
+async fn post_volume_swipe(
+    State(app): State<AppState>,
+    Json(req): Json<ToggleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    send_command(&app.cmd_tx, L2capCommand::SetVolumeSwipe(req.enabled)).await?;
+    Ok(Json(serde_json::json!({ "volume_swipe": req.enabled })))
 }
 
 /// Send a command to the active L2CAP session

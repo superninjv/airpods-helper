@@ -1,6 +1,10 @@
+// AAP/L2CAP modules contain Windows-specific code behind cfg(target_os = "windows").
+// On non-Windows builds, most items appear dead but are exercised via unit tests.
+#[allow(dead_code)]
 mod aap;
 mod ble;
 mod http;
+#[allow(dead_code)]
 mod l2cap;
 mod state;
 
@@ -13,13 +17,13 @@ use tracing::{error, info, warn};
 
 use crate::aap::parser::AapEvent;
 use crate::http::SharedCmdTx;
-use crate::l2cap::{BtAddr, L2capCommand};
+use crate::l2cap::BtAddr;
 use crate::state::create_shared_state;
 
 #[derive(Parser)]
 #[command(
     name = "airpods-windows",
-    about = "AirPods helper for Windows — BLE discovery + AAP protocol + HTTP API"
+    about = "AirPods helper for Windows -- BLE discovery + AAP protocol + HTTP API"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -68,6 +72,12 @@ enum Command {
         /// on/off (omit to show current)
         toggle: Option<String>,
     },
+
+    /// Get or set volume swipe (on/off)
+    VolumeSwipe {
+        /// on/off (omit to show current)
+        toggle: Option<String>,
+    },
 }
 
 const API_BASE: &str = "http://127.0.0.1:7654";
@@ -84,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Ca { toggle } => cmd_ca(toggle).await,
         Command::Noise { level } => cmd_noise(level).await,
         Command::OneBud { toggle } => cmd_one_bud(toggle).await,
+        Command::VolumeSwipe { toggle } => cmd_volume_swipe(toggle).await,
     }
 }
 
@@ -140,7 +151,7 @@ async fn run_daemon() -> anyhow::Result<()> {
                 let l2cap_cmd_tx = cmd_tx.clone();
 
                 // Run L2CAP session
-                let handle = tokio::spawn(async move {
+                let mut handle = tokio::spawn(async move {
                     match l2cap::run(bt_addr, l2cap_state, session_rx, l2cap_event_tx).await {
                         Ok(()) => info!("L2CAP session ended cleanly"),
                         Err(e) => error!("L2CAP session error: {e}"),
@@ -166,7 +177,7 @@ async fn run_daemon() -> anyhow::Result<()> {
                                 }
                             }
                         }
-                        _ = async { handle.is_finished() }, if handle.is_finished() => {
+                        _ = &mut handle => {
                             info!("L2CAP task finished");
                             break;
                         }
@@ -234,6 +245,7 @@ async fn cmd_status(json: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let model_name = status["model_name"].as_str().unwrap_or("");
     let model = status["model"].as_str().unwrap_or("");
     let firmware = status["firmware"].as_str().unwrap_or("");
     let anc = status["anc_mode"].as_str().unwrap_or("");
@@ -245,8 +257,10 @@ async fn cmd_status(json: bool) -> anyhow::Result<()> {
     let ca = status["conversational_awareness"].as_bool().unwrap_or(false);
     let noise = status["adaptive_noise_level"].as_u64().unwrap_or(0);
     let ob = status["one_bud_anc"].as_bool().unwrap_or(false);
+    let vs = status["volume_swipe"].as_bool().unwrap_or(false);
 
-    println!("{model}  (FW {firmware})");
+    let display_name = if model_name.is_empty() { model } else { model_name };
+    println!("{display_name}  (FW {firmware})");
     println!();
     print_battery("Left ", bl, status["charging_left"].as_bool().unwrap_or(false));
     print_battery("Right", br, status["charging_right"].as_bool().unwrap_or(false));
@@ -258,6 +272,7 @@ async fn cmd_status(json: bool) -> anyhow::Result<()> {
     }
     println!("CA:     {}", if ca { "on" } else { "off" });
     println!("1-Bud:  {}", if ob { "on" } else { "off" });
+    println!("Vol Sw: {}", if vs { "on" } else { "off" });
     println!(
         "Ears:   L={} R={}",
         if el { "in" } else { "out" },
@@ -368,6 +383,22 @@ async fn cmd_one_bud(toggle: Option<String>) -> anyhow::Result<()> {
             let status = http_get("/status").await?;
             let ob = status["one_bud_anc"].as_bool().unwrap_or(false);
             println!("{}", if ob { "on" } else { "off" });
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_volume_swipe(toggle: Option<String>) -> anyhow::Result<()> {
+    match toggle {
+        Some(t) => {
+            let enabled = parse_toggle(&t)?;
+            http_post("/volume-swipe", serde_json::json!({ "enabled": enabled })).await?;
+            println!("volume swipe: {}", if enabled { "on" } else { "off" });
+        }
+        None => {
+            let status = http_get("/status").await?;
+            let vs = status["volume_swipe"].as_bool().unwrap_or(false);
+            println!("{}", if vs { "on" } else { "off" });
         }
     }
     Ok(())
