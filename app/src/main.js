@@ -245,6 +245,22 @@ setupToggle("toggle-volume-swipe", "set_volume_swipe", "enabled");
 setupToggle("toggle-auto-reconnect", "set_auto_reconnect", "enabled");
 setupToggle("toggle-start-login", "set_start_on_login", "enabled");
 
+// Mic mode buttons
+document.querySelectorAll(".mic-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const mode = btn.dataset.mic;
+    try {
+      await invoke("set_mic_mode", { mode });
+      document
+        .querySelectorAll(".mic-btn")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    } catch (e) {
+      console.error("set mic mode error:", e);
+    }
+  });
+});
+
 // EQ buttons
 document.querySelectorAll(".eq-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {

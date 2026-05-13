@@ -1,6 +1,6 @@
 # Maintainer: Jack Hernandez <jack@synoros.io>
 pkgname=airpods-helper
-pkgver=0.2.1
+pkgver=0.2.2
 pkgrel=1
 pkgdesc="Native AirPods support for Linux — ANC, battery, EQ, ear detection, CLI"
 arch=('x86_64')
