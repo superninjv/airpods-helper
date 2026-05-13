@@ -3,7 +3,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::info;
 use zbus::{interface, object_server::SignalEmitter, Connection};
 
-use crate::aap::AncMode;
+use crate::aap::{AncMode, MicMode};
 use crate::eq::{EqCommand, EqPreset};
 use crate::l2cap::L2capCommand;
 use crate::state::SharedState;
@@ -176,6 +176,13 @@ impl AirPodsInterface {
 
     async fn set_one_bud_anc(&self, enabled: bool) -> zbus::fdo::Result<()> {
         self.send_cmd(L2capCommand::SetOneBudAnc(enabled)).await
+    }
+
+    /// Set which bud is the primary microphone. Accepts "auto", "right", "left".
+    async fn set_mic_mode(&self, mode: &str) -> zbus::fdo::Result<()> {
+        let mic_mode = MicMode::from_str(mode)
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("invalid mic mode: {mode}")))?;
+        self.send_cmd(L2capCommand::SetMicMode(mic_mode)).await
     }
 
     async fn reconnect(&self) -> zbus::fdo::Result<()> {

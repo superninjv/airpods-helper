@@ -6,9 +6,15 @@ pub const HANDSHAKE: [u8; 16] = [
     0x00,
 ];
 
-/// Feature enable packet — enables conversational awareness during playback + adaptive transparency
+/// Host capabilities packet (opcode 0x004D).
+///
+/// The bitmask byte at offset 6 advertises which features we (the host) support
+/// to the AirPods firmware. AirPods gates features on this — e.g. Adaptive
+/// Transparency and Conversational Awareness during media playback are only
+/// activated when the host claims iOS-equivalent capabilities. `0xFF` mirrors
+/// what iOS sends; older daemons sent `0xD7` which left features locked.
 pub const SET_FEATURES: [u8; 14] = [
-    0x04, 0x00, 0x04, 0x00, 0x4D, 0x00, 0xD7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x04, 0x00, 0x04, 0x00, 0x4D, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 /// Subscribe to all notification types (battery, ear detection, ANC, etc.)
@@ -55,6 +61,11 @@ pub fn set_adaptive_noise_level(level: u8) -> [u8; 11] {
 /// Enable or disable ANC when wearing a single AirPod
 pub fn set_one_bud_anc(enabled: bool) -> [u8; 11] {
     control_command(SUB_ONE_BUD_ANC, if enabled { 0x01 } else { 0x02 })
+}
+
+/// Set which bud is the primary microphone (auto/right/left).
+pub fn set_mic_mode(mode: MicMode) -> [u8; 11] {
+    control_command(SUB_MIC_MODE, mode as u8)
 }
 
 /// Set which listening modes are available in the rotation.

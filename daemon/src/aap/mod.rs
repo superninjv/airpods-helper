@@ -33,22 +33,122 @@ pub const CMD_CONNECTED_DEVICES: u8 = 0x2E;
 pub const CMD_CA_ACTIVITY: u8 = 0x4B;
 pub const CMD_EQ_DATA: u8 = 0x53;
 
-/// Control sub-commands (byte at offset 6, under CMD_CONTROL)
+/// Control sub-commands (byte at offset 6, under CMD_CONTROL).
+///
+/// Sourced from LibrePods `docs/control_commands.md` (extracted from iOS 19.1
+/// Beta Bluetooth stack). Most are 1-byte payloads with `0x01 = enabled` /
+/// `0x02 = disabled`. Hearing Aid uses 2 bytes (enrolled, enabled).
+#[allow(dead_code)]
+pub const SUB_MIC_MODE: u8 = 0x01;
+#[allow(dead_code)]
+pub const SUB_BUTTON_SEND_MODE: u8 = 0x05;
+#[allow(dead_code)]
+pub const SUB_OWNS_CONNECTION: u8 = 0x06;
+#[allow(dead_code)]
+pub const SUB_EAR_DETECTION: u8 = 0x0A;
 pub const SUB_ANC_MODE: u8 = 0x0D;
+#[allow(dead_code)]
+pub const SUB_VOICE_TRIGGER_SIRI: u8 = 0x12;
+#[allow(dead_code)]
+pub const SUB_SINGLE_CLICK_MODE: u8 = 0x14;
+#[allow(dead_code)]
+pub const SUB_DOUBLE_CLICK_MODE: u8 = 0x15;
+#[allow(dead_code)]
+pub const SUB_CLICK_HOLD_MODE: u8 = 0x16;
 pub const SUB_DOUBLE_CLICK_INTERVAL: u8 = 0x17;
 pub const SUB_CLICK_HOLD_INTERVAL: u8 = 0x18;
+#[allow(dead_code)]
+pub const SUB_LISTENING_MODE_CONFIGS: u8 = 0x1A;
 pub const SUB_ONE_BUD_ANC: u8 = 0x1B;
+#[allow(dead_code)]
+pub const SUB_CROWN_ROTATION_DIRECTION: u8 = 0x1C;
+#[allow(dead_code)]
+pub const SUB_AUTO_ANSWER_MODE: u8 = 0x1E;
 pub const SUB_CHIME_VOLUME: u8 = 0x1F;
+#[allow(dead_code)]
+pub const SUB_CONNECT_AUTOMATICALLY: u8 = 0x20;
 pub const SUB_VOLUME_SWIPE_INTERVAL: u8 = 0x23;
 pub const SUB_CALL_MANAGEMENT: u8 = 0x24;
 pub const SUB_VOLUME_SWIPE: u8 = 0x25;
 pub const SUB_ADAPTIVE_VOLUME: u8 = 0x26;
+#[allow(dead_code)]
+pub const SUB_SOFTWARE_MUTE: u8 = 0x27;
 pub const SUB_CONVERSATIONAL_AWARENESS: u8 = 0x28;
+#[allow(dead_code)]
+pub const SUB_SSL: u8 = 0x29;
 pub const SUB_HEARING_AID: u8 = 0x2C;
 pub const SUB_ADAPTIVE_NOISE_LEVEL: u8 = 0x2E;
 pub const SUB_GAIN_SWIPE: u8 = 0x2F;
+#[allow(dead_code)]
+pub const SUB_HRM: u8 = 0x30;
+#[allow(dead_code)]
+pub const SUB_IN_CASE_TONE: u8 = 0x31;
+#[allow(dead_code)]
+pub const SUB_SIRI_MULTITONE: u8 = 0x32;
 pub const SUB_HEARING_ASSIST: u8 = 0x33;
+#[allow(dead_code)]
+pub const SUB_ALLOW_OFF_LISTENING_MODE: u8 = 0x34;
 pub const SUB_SLEEP_DETECTION: u8 = 0x35;
+#[allow(dead_code)]
+pub const SUB_ALLOW_AUTO_CONNECT: u8 = 0x36;
+#[allow(dead_code)]
+pub const SUB_PPE_TOGGLE: u8 = 0x37;
+#[allow(dead_code)]
+pub const SUB_PPE_CAP_LEVEL: u8 = 0x38;
+#[allow(dead_code)]
+pub const SUB_RAW_GESTURES: u8 = 0x39;
+#[allow(dead_code)]
+pub const SUB_TEMPORARY_PAIRING: u8 = 0x3A;
+#[allow(dead_code)]
+pub const SUB_DYNAMIC_END_OF_CHARGE: u8 = 0x3B;
+#[allow(dead_code)]
+pub const SUB_SYSTEM_SIRI_MESSAGE: u8 = 0x3C;
+#[allow(dead_code)]
+pub const SUB_HEARING_AID_GENERIC: u8 = 0x3D;
+#[allow(dead_code)]
+pub const SUB_UPLINK_EQ_BUD: u8 = 0x3E;
+#[allow(dead_code)]
+pub const SUB_UPLINK_EQ_SOURCE: u8 = 0x3F;
+#[allow(dead_code)]
+pub const SUB_IN_CASE_TONE_VOLUME: u8 = 0x40;
+#[allow(dead_code)]
+pub const SUB_DISABLE_BUTTON_INPUT: u8 = 0x41;
+
+/// Primary microphone bud selection (control sub-command 0x01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MicMode {
+    Automatic = 0x00,
+    Right = 0x01,
+    Left = 0x02,
+}
+
+impl MicMode {
+    pub fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0x00 => Some(Self::Automatic),
+            0x01 => Some(Self::Right),
+            0x02 => Some(Self::Left),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Automatic => "auto",
+            Self::Right => "right",
+            Self::Left => "left",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "auto" | "automatic" => Some(Self::Automatic),
+            "right" => Some(Self::Right),
+            "left" => Some(Self::Left),
+            _ => None,
+        }
+    }
+}
 
 /// ANC mode values (byte at offset 7)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

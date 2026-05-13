@@ -80,6 +80,7 @@ trait AirPods {
     fn set_conversational_awareness(&self, enabled: bool) -> zbus::Result<()>;
     fn set_adaptive_noise_level(&self, level: u8) -> zbus::Result<()>;
     fn set_one_bud_anc(&self, enabled: bool) -> zbus::Result<()>;
+    fn set_mic_mode(&self, mode: &str) -> zbus::Result<()>;
     fn set_eq_preset(&self, name: &str) -> zbus::Result<()>;
     fn disable_eq(&self) -> zbus::Result<()>;
     fn list_eq_presets(&self) -> zbus::Result<Vec<String>>;
@@ -123,6 +124,11 @@ enum Command {
         /// on/off (omit to show current)
         toggle: Option<String>,
     },
+    /// Set primary microphone bud (auto, right, left)
+    Mic {
+        /// Mode: auto, right, or left
+        mode: String,
+    },
     /// Control EQ presets
     Eq {
         /// Preset name, "list", or "off" (omit to show current)
@@ -151,6 +157,16 @@ async fn main() -> anyhow::Result<()> {
         Command::Ca { toggle } => cmd_ca(&proxy, toggle, cli.json).await?,
         Command::Noise { level } => cmd_noise(&proxy, level, cli.json).await?,
         Command::OneBud { toggle } => cmd_one_bud(&proxy, toggle, cli.json).await?,
+        Command::Mic { mode } => {
+            let m = mode.to_lowercase();
+            match m.as_str() {
+                "auto" | "automatic" | "right" | "left" => {
+                    proxy.set_mic_mode(&m).await?;
+                    println!("mic: {m}");
+                }
+                _ => anyhow::bail!("invalid mic mode: {m} (use: auto, right, left)"),
+            }
+        }
         Command::Eq { action } => cmd_eq(&proxy, action, cli.json).await?,
         Command::Reconnect => {
             proxy.reconnect().await?;
