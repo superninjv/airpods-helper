@@ -128,11 +128,12 @@ pub async fn run(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(L2capCommand::SetAncMode(mode)) => {
-                        // AirPods Pro 2 may have "Off" removed from the listening
-                        // mode rotation (via iPhone settings synced through iCloud).
-                        // The firmware rejects the Off command if it's not in the
-                        // allowed set. Re-send the listening mode config before
-                        // switching to Off to ensure it's permitted.
+                        // AirPods firmware may have "Off" removed from the listening
+                        // mode rotation (via iOS settings synced through iCloud).
+                        // When that happens, the firmware rejects the Off command
+                        // unless Off is currently in the allowed set. Re-send the
+                        // full listening mode config before switching to Off so
+                        // it's always permitted, regardless of model.
                         if mode == aap::AncMode::Off {
                             debug!("re-enabling Off in listening mode rotation before switching");
                             if let Err(e) = seq.send(&aap::commands::ENABLE_ALL_LISTENING_MODES).await {
@@ -251,10 +252,15 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
         }
         AapEvent::DeviceInfo(info) => {
             let display_name = models::model_display_name(&info.model).to_string();
+            let features: Vec<String> = models::model_features(&info.model)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
             state.update(|s| {
                 s.model = info.model.clone();
                 s.model_name = display_name;
                 s.firmware = info.firmware.clone();
+                s.features = features;
             });
         }
         _ => {}

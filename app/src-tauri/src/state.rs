@@ -27,6 +27,7 @@ pub struct AirPodsState {
     pub model_name: String,
     pub firmware: String,
     pub eq_preset: String,
+    pub features: Vec<String>,
     pub auto_reconnect: bool,
     pub start_on_login: bool,
 }
@@ -55,6 +56,7 @@ impl Default for AirPodsState {
             model_name: String::new(),
             firmware: String::new(),
             eq_preset: "flat".to_string(),
+            features: Vec::new(),
             auto_reconnect: true,
             start_on_login: false,
         }

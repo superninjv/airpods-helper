@@ -131,6 +131,11 @@ impl AirPodsInterface {
     }
 
     #[zbus(property)]
+    fn features(&self) -> Vec<String> {
+        self.state.current().features.clone()
+    }
+
+    #[zbus(property)]
     fn volume_swipe(&self) -> bool {
         self.state.current().volume_swipe
     }
@@ -287,6 +292,7 @@ pub async fn emit_properties_changed(connection: &Connection, changed_props: &[&
             "Model" => iface.model_changed(emitter).await,
             "ModelName" => iface.model_name_changed(emitter).await,
             "Firmware" => iface.firmware_changed(emitter).await,
+            "Features" => iface.features_changed(emitter).await,
             "VolumeSwipe" => iface.volume_swipe_changed(emitter).await,
             "AdaptiveVolume" => iface.adaptive_volume_changed(emitter).await,
             "ChimeVolume" => iface.chime_volume_changed(emitter).await,

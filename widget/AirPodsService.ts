@@ -28,6 +28,7 @@ export interface AirPodsState {
   eqPreset: string
   model: string
   firmware: string
+  features: string[]
 }
 
 const DEFAULT_STATE: AirPodsState = {
@@ -48,6 +49,7 @@ const DEFAULT_STATE: AirPodsState = {
   eqPreset: "",
   model: "",
   firmware: "",
+  features: [],
 }
 
 const [getState, setState] = createState<AirPodsState>({ ...DEFAULT_STATE })
@@ -84,6 +86,7 @@ function readAllProperties(): Partial<AirPodsState> {
     eqPreset: getProperty("EqPreset") ?? "",
     model: getProperty("Model") ?? "",
     firmware: getProperty("Firmware") ?? "",
+    features: getProperty("Features") ?? [],
   }
 }
 

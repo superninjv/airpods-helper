@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 DIST="airpods-helper-${VERSION}-x86_64-linux"
 
 cd "$(dirname "$0")/.."

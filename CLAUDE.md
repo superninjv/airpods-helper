@@ -69,7 +69,9 @@ systemctl --user enable --now airpods-daemon.service
 
 ## D-Bus Interface (`org.costa.AirPods`)
 
-**Properties:** Connected, BatteryLeft/Right/Case, ChargingLeft/Right/Case, AncMode, EarLeft/Right, ConversationalAwareness, AdaptiveNoiseLevel, OneBudAnc, Model, Firmware, EqPreset
+**Properties:** Connected, BatteryLeft/Right/Case, ChargingLeft/Right/Case, AncMode, EarLeft/Right, ConversationalAwareness, AdaptiveNoiseLevel, OneBudAnc, Model, ModelName, Firmware, Features, EqPreset
+
+**Features property:** `as` (array of strings) — model-dependent capability list. Possible values: `anc`, `adaptive`, `ca`, `one_bud_anc`. Widgets/CLI use this to conditionally show controls. Set from `models::model_features()` when DeviceInfo is received. Unknown models get all features (safe default).
 
 **Methods:** SetAncMode(s), SetConversationalAwareness(b), SetAdaptiveNoiseLevel(y), SetOneBudAnc(b), SetEqPreset(s), DisableEq(), ListEqPresets(), Reconnect()
 

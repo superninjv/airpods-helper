@@ -63,10 +63,18 @@ async fn main() -> anyhow::Result<()> {
         mpris::watch_ear_detection(rx).await;
     });
 
-    // Start BlueZ monitor
+    // Start BlueZ monitor (restarts if the event stream drops)
     tokio::spawn(async move {
-        if let Err(e) = bluez::monitor(bluez_tx).await {
-            error!("BlueZ monitor error: {e}");
+        loop {
+            match bluez::monitor(bluez_tx.clone()).await {
+                Ok(()) => {
+                    info!("BlueZ monitor ended, restarting in 5s");
+                }
+                Err(e) => {
+                    error!("BlueZ monitor error: {e}, restarting in 5s");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
 
@@ -188,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
                         dbus::emit_properties_changed(&connection, &["AudioSource"]).await;
                     }
                     AapEvent::DeviceInfo(info) => {
-                        dbus::emit_properties_changed(&connection, &["Model", "ModelName", "Firmware"]).await;
+                        dbus::emit_properties_changed(&connection, &["Model", "ModelName", "Firmware", "Features"]).await;
                         dbus::emit_device_connected(&connection, &info.model).await;
                         dbus::emit_properties_changed(&connection, &["Connected"]).await;
 

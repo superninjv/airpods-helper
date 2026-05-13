@@ -1,3 +1,21 @@
+/// Feature capabilities that vary by AirPods model.
+pub fn model_features(model_number: &str) -> Vec<&'static str> {
+    match model_number {
+        "A1523" | "A1722" => vec![],
+        "A2031" | "A2032" => vec![],
+        "A2564" | "A2565" => vec![],
+        "A3050" | "A3053" | "A3054" | "A3058" => vec![],
+        "A3055" | "A3056" | "A3057" | "A3059" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
+        "A2083" | "A2084" | "A2190" => vec!["anc"],
+        "A2698" | "A2699" | "A2700" | "A2931"
+        | "A2968" | "A3047" | "A3048" | "A3049" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
+        "A3063" | "A3064" | "A3065" | "A3122" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
+        "A2096" => vec!["anc"],
+        "A3184" => vec!["anc", "adaptive", "ca"],
+        _ => vec!["anc", "adaptive", "ca", "one_bud_anc"],
+    }
+}
+
 /// Map Apple model numbers to human-readable product names.
 pub fn model_display_name(model_number: &str) -> &str {
     match model_number {

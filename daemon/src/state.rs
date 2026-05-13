@@ -28,6 +28,7 @@ pub struct AirPodsState {
     pub firmware: String,
     pub eq_preset: String,
     pub conversational_activity: String,
+    pub features: Vec<String>,
 }
 
 impl Default for AirPodsState {
@@ -55,6 +56,7 @@ impl Default for AirPodsState {
             firmware: String::new(),
             eq_preset: String::new(),
             conversational_activity: "normal".to_string(),
+            features: Vec::new(),
         }
     }
 }

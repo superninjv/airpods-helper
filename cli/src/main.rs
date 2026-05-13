@@ -73,6 +73,9 @@ trait AirPods {
     #[zbus(property)]
     fn conversational_activity_state(&self) -> zbus::Result<String>;
 
+    #[zbus(property)]
+    fn features(&self) -> zbus::Result<Vec<String>>;
+
     fn set_anc_mode(&self, mode: &str) -> zbus::Result<()>;
     fn set_conversational_awareness(&self, enabled: bool) -> zbus::Result<()>;
     fn set_adaptive_noise_level(&self, level: u8) -> zbus::Result<()>;
@@ -161,12 +164,15 @@ async fn main() -> anyhow::Result<()> {
 async fn cmd_status(proxy: &AirPodsProxy<'_>, json: bool) -> anyhow::Result<()> {
     let connected = proxy.connected().await?;
 
+    let features = proxy.features().await.unwrap_or_default();
+
     if json {
         let obj = serde_json::json!({
             "connected": connected,
             "model": proxy.model().await.unwrap_or_default(),
             "model_name": proxy.model_name().await.unwrap_or_default(),
             "firmware": proxy.firmware().await.unwrap_or_default(),
+            "features": features,
             "battery_left": proxy.battery_left().await.unwrap_or(-1),
             "battery_right": proxy.battery_right().await.unwrap_or(-1),
             "battery_case": proxy.battery_case().await.unwrap_or(-1),
@@ -195,18 +201,16 @@ async fn cmd_status(proxy: &AirPodsProxy<'_>, json: bool) -> anyhow::Result<()> 
         return Ok(());
     }
 
+    let has = |f: &str| features.iter().any(|s| s == f);
+
     let model = proxy.model().await.unwrap_or_default();
     let model_name = proxy.model_name().await.unwrap_or_default();
     let firmware = proxy.firmware().await.unwrap_or_default();
-    let anc = proxy.anc_mode().await.unwrap_or_default();
     let bl = proxy.battery_left().await.unwrap_or(-1);
     let br = proxy.battery_right().await.unwrap_or(-1);
     let bc = proxy.battery_case().await.unwrap_or(-1);
     let el = proxy.ear_left().await.unwrap_or(false);
     let er = proxy.ear_right().await.unwrap_or(false);
-    let ca = proxy.conversational_awareness().await.unwrap_or(false);
-    let noise = proxy.adaptive_noise_level().await.unwrap_or(0);
-    let ob = proxy.one_bud_anc().await.unwrap_or(false);
     let eq = proxy.eq_preset().await.unwrap_or_default();
 
     let display = if model_name.is_empty() { &model } else { &model_name };
@@ -216,12 +220,24 @@ async fn cmd_status(proxy: &AirPodsProxy<'_>, json: bool) -> anyhow::Result<()> 
     print_battery("Right", br, proxy.charging_right().await.unwrap_or(false));
     print_battery("Case ", bc, proxy.charging_case().await.unwrap_or(false));
     println!();
-    println!("ANC:    {anc}");
-    if anc == "adaptive" {
-        println!("Noise:  {noise}%");
+
+    if has("anc") {
+        let anc = proxy.anc_mode().await.unwrap_or_default();
+        println!("ANC:    {anc}");
+        if has("adaptive") && anc == "adaptive" {
+            let noise = proxy.adaptive_noise_level().await.unwrap_or(0);
+            println!("Noise:  {noise}%");
+        }
     }
-    println!("CA:     {}", if ca { "on" } else { "off" });
-    println!("1-Bud:  {}", if ob { "on" } else { "off" });
+    if has("ca") {
+        let ca = proxy.conversational_awareness().await.unwrap_or(false);
+        println!("CA:     {}", if ca { "on" } else { "off" });
+    }
+    if has("one_bud_anc") {
+        let ob = proxy.one_bud_anc().await.unwrap_or(false);
+        println!("1-Bud:  {}", if ob { "on" } else { "off" });
+    }
+
     println!("Ears:   L={} R={}", if el { "in" } else { "out" }, if er { "in" } else { "out" });
     if !eq.is_empty() {
         println!("EQ:     {eq}");
