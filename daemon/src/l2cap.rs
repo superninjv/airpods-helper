@@ -16,6 +16,7 @@ pub enum L2capCommand {
     SetConversationalAwareness(bool),
     SetAdaptiveNoiseLevel(u8),
     SetOneBudAnc(bool),
+    SetMicMode(aap::MicMode),
     #[allow(dead_code)] // wired in match arm, constructed by future CLI disconnect command
     Disconnect,
 }
@@ -165,6 +166,13 @@ pub async fn run(
                         let pkt = aap::commands::set_one_bud_anc(enabled);
                         if let Err(e) = seq.send(&pkt).await {
                             error!("failed to send one-bud ANC command: {e}");
+                        }
+                    }
+                    Some(L2capCommand::SetMicMode(mode)) => {
+                        let pkt = aap::commands::set_mic_mode(mode);
+                        debug!("sending mic mode {:?}: {:02X?}", mode, pkt);
+                        if let Err(e) = seq.send(&pkt).await {
+                            error!("failed to send mic mode command: {e}");
                         }
                     }
                     Some(L2capCommand::Disconnect) | None => {

@@ -73,7 +73,13 @@ systemctl --user enable --now airpods-daemon.service
 
 **Features property:** `as` (array of strings) — model-dependent capability list. Possible values: `anc`, `adaptive`, `ca`, `one_bud_anc`. Widgets/CLI use this to conditionally show controls. Set from `models::model_features()` when DeviceInfo is received. Unknown models get all features (safe default).
 
-**Methods:** SetAncMode(s), SetConversationalAwareness(b), SetAdaptiveNoiseLevel(y), SetOneBudAnc(b), SetEqPreset(s), DisableEq(), ListEqPresets(), Reconnect()
+**Methods:** SetAncMode(s), SetConversationalAwareness(b), SetAdaptiveNoiseLevel(y), SetOneBudAnc(b), SetMicMode(s), SetEqPreset(s), DisableEq(), ListEqPresets(), Reconnect()
+
+**SetMicMode** takes "auto", "right", or "left" — selects which bud's microphone is primary. Maps to AAP control sub-command 0x01.
+
+## Protocol notes
+
+The L2CAP PSM 0x1001 AAP channel is BR/EDR-only. Concurrent A2DP-quality output + microphone input from AirPods is **not achievable on Linux today**: AirPods Pro 2 H2 chip is capable of bidirectional LC3 over LE Audio, but Apple gates standard BAP/PACS advertising behind Magic Pairing crypto (AAP opcodes 0x30/0x31 — IRK/EncKey exchange) that requires Apple's H2 keys. The classic BT A2DP/HFP profile mutex applies and macOS itself doesn't escape this — when a Mac call activates the mic, it drops A2DP to SCO/mSBC just like Linux. Cracking Magic Pairing is multi-month firmware RE; out of scope for now. See `daemon/src/aap/mod.rs` for the full documented sub-command table sourced from LibrePods.
 
 **Signals:** DeviceConnected(s), DeviceDisconnected(), EarDetectionChanged(bb)
 
