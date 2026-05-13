@@ -27,6 +27,7 @@ let state = {
   oneBudAnc: true,
   eqPreset: "",
   model: "", firmware: "",
+  features: [] as string[],
 }
 
 const listeners: (() => void)[] = []
@@ -61,6 +62,7 @@ function sync() {
     eqPreset: gp("EqPreset") ?? "",
     model: gp("Model") ?? "",
     firmware: gp("Firmware") ?? "",
+    features: gp("Features") ?? [],
   }
   notify()
 }
@@ -267,22 +269,34 @@ export default function AirPodsBattery() {
     if (s.batteryRight >= 0) batteryBox.append(makeBatRow("Right", s.batteryRight, s.chargingRight))
     if (s.batteryCase >= 0) batteryBox.append(makeBatRow("Case", s.batteryCase, s.chargingCase))
 
-    // ANC buttons
-    for (let i = 0; i < ancModes.length; i++) {
-      const active = ancModes[i].id === s.ancMode
-      ancBtns[i].cssClasses = active ? ["ap-anc-btn", "active"] : ["ap-anc-btn"]
+    // Feature checks
+    const has = (f: string) => s.features.includes(f)
+
+    // ANC buttons — only show if model supports ANC
+    ancBox.visible = has("anc")
+    if (has("anc")) {
+      for (let i = 0; i < ancModes.length; i++) {
+        // Hide adaptive button if model doesn't support it
+        ancBtns[i].visible = ancModes[i].id !== "adaptive" || has("adaptive")
+        const active = ancModes[i].id === s.ancMode
+        ancBtns[i].cssClasses = active ? ["ap-anc-btn", "active"] : ["ap-anc-btn"]
+      }
     }
 
     // Adaptive noise slider
-    noiseSliderBox.visible = s.ancMode === "adaptive"
-    if (s.ancMode === "adaptive") {
+    noiseSliderBox.visible = has("adaptive") && s.ancMode === "adaptive"
+    if (noiseSliderBox.visible) {
       noiseSlider.set_value(s.adaptiveNoiseLevel)
     }
 
-    // Toggles (block signal to avoid feedback loop)
+    // Toggles — only show relevant ones
+    caRow.visible = has("ca")
+    obRow.visible = has("one_bud_anc")
+    togglesBox.visible = has("ca") || has("one_bud_anc")
+
     updatingToggles = true
-    caSwitch.active = s.conversationalAwareness
-    obSwitch.active = s.oneBudAnc
+    if (has("ca")) caSwitch.active = s.conversationalAwareness
+    if (has("one_bud_anc")) obSwitch.active = s.oneBudAnc
     updatingToggles = false
 
     // EQ

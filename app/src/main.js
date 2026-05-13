@@ -59,6 +59,19 @@ function updateUI(s) {
   updateBattery("right", s.battery_right, s.charging_right);
   updateBattery("case", s.battery_case, s.charging_case);
 
+  // Feature-based section visibility
+  const features = s.features || [];
+  const has = (f) => features.includes(f);
+
+  const ancCard = document.getElementById("anc-card");
+  if (ancCard) ancCard.classList.toggle("hidden", !has("anc"));
+
+  const caRow = document.getElementById("toggle-ca")?.closest(".toggle-row");
+  if (caRow) caRow.classList.toggle("hidden", !has("ca"));
+
+  const obRow = document.getElementById("toggle-one-bud")?.closest(".toggle-row");
+  if (obRow) obRow.classList.toggle("hidden", !has("one_bud_anc"));
+
   // ANC mode
   document.querySelectorAll(".anc-btn").forEach((btn) => {
     if (btn.dataset.mode === s.anc_mode) {
@@ -66,11 +79,15 @@ function updateUI(s) {
     } else {
       btn.classList.remove("active");
     }
+    // Hide adaptive button if model doesn't support it
+    if (btn.dataset.mode === "adaptive") {
+      btn.classList.toggle("hidden", !has("adaptive"));
+    }
   });
 
   // Adaptive noise slider visibility
   const adaptiveRow = document.getElementById("adaptive-noise-row");
-  if (s.anc_mode === "adaptive") {
+  if (has("adaptive") && s.anc_mode === "adaptive") {
     adaptiveRow.classList.remove("hidden");
   } else {
     adaptiveRow.classList.add("hidden");

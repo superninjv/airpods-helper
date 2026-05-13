@@ -19,16 +19,21 @@ A lightweight Rust daemon communicates with AirPods over Bluetooth L2CAP using t
 
 ## Supported Devices
 
-| Device | Model Numbers |
-|--------|---------------|
-| AirPods Pro | A2084 |
-| AirPods Pro 2 (Lightning) | A2698, A2699 |
-| AirPods Pro 2 (USB-C) | A3047, A3048 |
-| AirPods 3 | A2564, A2565 |
-| AirPods 4 | A3131, A3130 |
-| AirPods 4 ANC | A3914, A3913 |
-| AirPods Max | A2096 |
-| AirPods Max 2 | A3526, A3527 |
+| Device | Model Numbers | ANC | Adaptive | CA |
+|--------|---------------|:---:|:--------:|:--:|
+| AirPods 1 | A1523, A1722 | | | |
+| AirPods 2 | A2031, A2032 | | | |
+| AirPods 3 | A2564, A2565 | | | |
+| AirPods 4 | A3050, A3053, A3054, A3058 | | | |
+| AirPods 4 ANC | A3055, A3056, A3057, A3059 | ✓ | ✓ | ✓ |
+| AirPods Pro | A2083, A2084, A2190 | ✓ | | |
+| AirPods Pro 2 (Lightning) | A2698, A2699, A2700, A2931 | ✓ | ✓ | ✓ |
+| AirPods Pro 2 (USB-C) | A2968, A3047, A3048, A3049 | ✓ | ✓ | ✓ |
+| AirPods Pro 3 | A3063, A3064, A3065, A3122 | ✓ | ✓ | ✓ |
+| AirPods Max | A2096 | ✓ | | |
+| AirPods Max 2 | A3184 | ✓ | ✓ | ✓ |
+
+The daemon auto-detects the connected model and exposes a `Features` D-Bus property so widgets and CLI only show controls your hardware supports.
 
 ## Features
 

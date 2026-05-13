@@ -60,7 +60,9 @@ function createPopupWindow(gdkmonitor: Gdk.Monitor): Gtk.Window {
           />
           <label
             class="airpods-status"
-            label={getState.as((s) => `ANC: ${s.ancMode}`)}
+            label={getState.as((s) =>
+              s.features.includes("anc") ? `ANC: ${s.ancMode}` : "Connected"
+            )}
             xalign={0}
           />
         </box>

@@ -311,6 +311,10 @@ async fn run_once(state: SharedState, cmd_sender: CommandSender) -> Result<(), S
                                     s.volume_swipe = json["volume_swipe"].as_bool().unwrap_or(true);
                                     if let Some(model) = json["model"].as_str() {
                                         s.model = model.to_string();
+                                        s.features = models::model_features(model)
+                                            .into_iter()
+                                            .map(|f| f.to_string())
+                                            .collect();
                                     }
                                     if let Some(model_name) = json["model_name"].as_str() {
                                         s.model_name = model_name.to_string();
@@ -440,10 +444,15 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
         }
         AapEvent::DeviceInfo(info) => {
             let display_name = models::model_display_name(&info.model).to_string();
+            let features: Vec<String> = models::model_features(&info.model)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
             state.update(|s| {
                 s.model = info.model.clone();
                 s.model_name = display_name;
                 s.firmware = info.firmware.clone();
+                s.features = features;
             });
         }
         _ => {}

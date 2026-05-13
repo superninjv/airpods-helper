@@ -2,7 +2,7 @@ use bluer::{AdapterEvent, Address, Device, Session};
 use futures::StreamExt;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Events from the BlueZ monitor
 #[derive(Debug)]
@@ -11,10 +11,28 @@ pub enum BlueZEvent {
     AirPodsDisconnected(Address),
 }
 
-/// Monitor BlueZ D-Bus for AirPods connect/disconnect events
+/// Monitor BlueZ D-Bus for AirPods connect/disconnect events.
+/// Retries connecting to BlueZ with backoff if it's not ready yet (boot race).
 pub async fn monitor(tx: mpsc::Sender<BlueZEvent>) -> bluer::Result<()> {
-    let session = Session::new().await?;
-    let adapter = session.default_adapter().await?;
+    let (_session, adapter) = {
+        let mut delay = std::time::Duration::from_secs(1);
+        let max_delay = std::time::Duration::from_secs(30);
+        loop {
+            match Session::new().await {
+                Ok(session) => match session.default_adapter().await {
+                    Ok(adapter) => break (session, adapter),
+                    Err(e) => {
+                        warn!("BlueZ adapter not ready, retrying in {}s: {e}", delay.as_secs());
+                    }
+                },
+                Err(e) => {
+                    warn!("BlueZ session not ready, retrying in {}s: {e}", delay.as_secs());
+                }
+            }
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(max_delay);
+        }
+    };
     info!("monitoring BlueZ adapter: {}", adapter.name());
 
     let mut known_connected: HashSet<Address> = HashSet::new();
