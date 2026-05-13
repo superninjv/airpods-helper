@@ -160,6 +160,12 @@ async fn run_once(state: SharedState, cmd_sender: CommandSender) -> Result<(), S
                             error!("failed to send volume swipe command: {e}");
                         }
                     }
+                    Some(DaemonCommand::SetMicMode(mode)) => {
+                        let pkt = aap::commands::set_mic_mode(mode);
+                        if let Err(e) = seq.send(&pkt).await {
+                            error!("failed to send mic mode command: {e}");
+                        }
+                    }
                     Some(DaemonCommand::Disconnect) | None => {
                         info!("disconnect requested");
                         break;

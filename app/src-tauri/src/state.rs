@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex};
 
-use crate::aap::AncMode;
+use crate::aap::{AncMode, MicMode};
 
 /// Shared AirPods state, updated by the daemon and consumed by the frontend
 #[derive(Debug, Clone, serde::Serialize)]
@@ -110,6 +110,7 @@ pub enum DaemonCommand {
     SetAdaptiveNoiseLevel(u8),
     SetOneBudAnc(bool),
     SetVolumeSwipe(bool),
+    SetMicMode(MicMode),
     Disconnect,
 }
 

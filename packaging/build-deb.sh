@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="0.2.1"
+VERSION="0.2.2"
 PKGNAME="airpods-helper"
 ARCH="amd64"
 STAGING="$PKGNAME-${VERSION}_${ARCH}"

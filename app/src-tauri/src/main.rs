@@ -66,6 +66,16 @@ async fn set_one_bud_anc(
     send_command(&cmd_sender, DaemonCommand::SetOneBudAnc(enabled)).await
 }
 
+/// Tauri command: set primary microphone bud (auto/right/left)
+#[tauri::command]
+async fn set_mic_mode(
+    mode: String,
+    cmd_sender: tauri::State<'_, CommandSender>,
+) -> Result<(), String> {
+    let mic_mode = aap::MicMode::from_str(&mode).ok_or("invalid mic mode (use auto, right, left)")?;
+    send_command(&cmd_sender, DaemonCommand::SetMicMode(mic_mode)).await
+}
+
 /// Tauri command: set volume swipe
 #[tauri::command]
 async fn set_volume_swipe(

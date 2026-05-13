@@ -28,6 +28,7 @@ pub const CMD_CA_ACTIVITY: u8 = 0x4B;
 pub const CMD_EQ_DATA: u8 = 0x53;
 
 /// Control sub-commands (byte at offset 6, under CMD_CONTROL)
+pub const SUB_MIC_MODE: u8 = 0x01;
 pub const SUB_ANC_MODE: u8 = 0x0D;
 pub const SUB_DOUBLE_CLICK_INTERVAL: u8 = 0x17;
 pub const SUB_CLICK_HOLD_INTERVAL: u8 = 0x18;
@@ -43,6 +44,33 @@ pub const SUB_ADAPTIVE_NOISE_LEVEL: u8 = 0x2E;
 pub const SUB_GAIN_SWIPE: u8 = 0x2F;
 pub const SUB_HEARING_ASSIST: u8 = 0x33;
 pub const SUB_SLEEP_DETECTION: u8 = 0x35;
+
+/// Primary microphone bud selection (control sub-command 0x01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MicMode {
+    Automatic = 0x00,
+    Right = 0x01,
+    Left = 0x02,
+}
+
+impl MicMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Automatic => "auto",
+            Self::Right => "right",
+            Self::Left => "left",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "auto" | "automatic" => Some(Self::Automatic),
+            "right" => Some(Self::Right),
+            "left" => Some(Self::Left),
+            _ => None,
+        }
+    }
+}
 
 /// ANC mode values (byte at offset 7)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
