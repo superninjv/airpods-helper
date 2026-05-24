@@ -414,5 +414,84 @@ pairInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") attemptPair();
 });
 
+// Quick-pair scan
+const quickpairBtn = document.getElementById("btn-quickpair");
+const quickpairHint = document.getElementById("quickpair-hint");
+const candidateList = document.getElementById("candidate-list");
+
+async function runQuickPair() {
+  quickpairBtn.disabled = true;
+  quickpairBtn.textContent = "Scanning...";
+  quickpairHint.textContent = "Scanning for 10 seconds — keep the case open.";
+  quickpairHint.classList.remove("is-error");
+  candidateList.classList.add("hidden");
+  candidateList.innerHTML = "";
+  try {
+    const candidates = await invoke("quick_pair_scan", { durationSecs: 10 });
+    if (!candidates || candidates.length === 0) {
+      quickpairHint.textContent =
+        "No AirPods found. Open the case (status light should flash white) and scan again.";
+      return;
+    }
+    quickpairHint.textContent = `Found ${candidates.length} candidate${candidates.length === 1 ? "" : "s"}. Tap one to pair.`;
+    candidateList.classList.remove("hidden");
+    for (const c of candidates) {
+      const li = document.createElement("li");
+      li.className = "candidate-row";
+      if (c.in_pair_mode) li.classList.add("in-pair-mode");
+
+      const info = document.createElement("div");
+      info.className = "device-info";
+      const name = document.createElement("div");
+      name.className = "device-row-name";
+      name.textContent = c.model + (c.in_pair_mode ? " ★" : "");
+      const meta = document.createElement("div");
+      meta.className = "device-row-mac";
+      meta.textContent = `${c.address}  ·  ${c.rssi} dBm`;
+      info.appendChild(name);
+      info.appendChild(meta);
+
+      const btn = document.createElement("button");
+      btn.className = "btn-primary candidate-pair";
+      btn.textContent = "Pair";
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "Pairing...";
+        try {
+          await invoke("pair", { address: c.address });
+          btn.textContent = "Paired";
+          quickpairHint.textContent = `Paired ${c.model}. Connecting...`;
+          await refreshPairedDevices();
+          // Try to auto-connect after pair succeeds
+          try {
+            await invoke("connect", { address: c.address });
+          } catch (e) {
+            console.warn("auto-connect after pair failed:", e);
+          }
+        } catch (e) {
+          console.error("pair error:", e);
+          btn.disabled = false;
+          btn.textContent = "Pair";
+          quickpairHint.classList.add("is-error");
+          quickpairHint.textContent = "Pair failed: " + e;
+        }
+      });
+
+      li.appendChild(info);
+      li.appendChild(btn);
+      candidateList.appendChild(li);
+    }
+  } catch (e) {
+    console.error("quick_pair_scan error:", e);
+    quickpairHint.classList.add("is-error");
+    quickpairHint.textContent = "Scan failed: " + e;
+  } finally {
+    quickpairBtn.disabled = false;
+    quickpairBtn.textContent = "Scan";
+  }
+}
+
+quickpairBtn.addEventListener("click", runQuickPair);
+
 // Initial load
 refreshPairedDevices();

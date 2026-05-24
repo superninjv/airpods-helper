@@ -237,6 +237,31 @@ impl AirPodsInterface {
         Ok(())
     }
 
+    /// Quick-pair scan: run an LE scan for `duration_secs` and return any
+    /// nearby unpaired AirPods broadcasting Apple Continuity proximity records.
+    /// Returns tuples of (mac, name, model_hint, rssi_dbm, in_pair_mode).
+    async fn quick_pair_scan(
+        &self,
+        duration_secs: u32,
+    ) -> zbus::fdo::Result<Vec<(String, String, String, i16, bool)>> {
+        info!("QuickPairScan requested via D-Bus, duration={duration_secs}s");
+        let candidates = crate::bluez::quick_pair_scan(duration_secs)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ scan failed: {e}")))?;
+        Ok(candidates
+            .into_iter()
+            .map(|c| {
+                (
+                    c.address.to_string(),
+                    c.name,
+                    c.model_hint,
+                    c.rssi,
+                    c.in_pair_mode,
+                )
+            })
+            .collect())
+    }
+
     /// List paired AirPods devices known to BlueZ. Returns (mac, name) tuples.
     async fn list_paired(&self) -> zbus::fdo::Result<Vec<(String, String)>> {
         let paired = crate::bluez::list_paired_airpods()

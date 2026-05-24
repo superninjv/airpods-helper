@@ -722,3 +722,56 @@ body::-webkit-scrollbar-thumb:hover {
 .pair-form-hint.is-error {
   color: var(--red);
 }
+
+.quickpair {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.quickpair-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quickpair-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+}
+
+.quickpair-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.quickpair-hint.is-error {
+  color: var(--red);
+}
+
+.candidate-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.candidate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.candidate-row.in-pair-mode {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}

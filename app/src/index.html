@@ -34,8 +34,20 @@
       </div>
       <ul class="device-list" id="device-list"></ul>
       <p class="device-list-empty hidden" id="device-list-empty">
-        No paired AirPods yet. Open your case (status light flashing white) and pair below, or use <code>bluetoothctl</code>.
+        No paired AirPods yet. Open your case (status light flashing white) and tap Quick Pair below, or use <code>bluetoothctl</code>.
       </p>
+
+      <div class="quickpair">
+        <div class="quickpair-header">
+          <div class="quickpair-label">Quick Pair</div>
+          <button id="btn-quickpair" class="btn-primary">Scan</button>
+        </div>
+        <div class="quickpair-hint" id="quickpair-hint">
+          Open the case near this machine — we'll find AirPods in pairing mode.
+        </div>
+        <ul class="candidate-list hidden" id="candidate-list"></ul>
+      </div>
+
       <div class="pair-form">
         <div class="pair-form-label">Pair by MAC</div>
         <div class="pair-form-row">
