@@ -21,7 +21,23 @@
         <span id="device-model" class="meta-item"></span>
         <span id="device-firmware" class="meta-item"></span>
       </div>
+      <div class="header-actions" id="header-actions">
+        <button id="btn-disconnect" class="btn-secondary hidden">Disconnect</button>
+      </div>
     </header>
+
+    <!-- Devices (paired list, shown when disconnected) -->
+    <section class="card" id="devices-card">
+      <div class="card-header-row">
+        <h2 class="card-title">Paired AirPods</h2>
+        <button id="btn-refresh-devices" class="btn-icon" title="Refresh list">↻</button>
+      </div>
+      <ul class="device-list" id="device-list"></ul>
+      <p class="device-list-empty hidden" id="device-list-empty">
+        No paired AirPods yet. Open your case near this machine and pair via
+        <code>bluetoothctl</code> or your desktop's Bluetooth settings.
+      </p>
+    </section>
 
     <!-- Battery -->
     <section class="card" id="battery-section">

@@ -115,10 +115,168 @@ async fn set_start_on_login(
     Ok(())
 }
 
-/// Tauri command: disconnect from AirPods
+/// Tauri command: disconnect from AirPods.
+///
+/// Closes the L2CAP session AND issues a BlueZ-level disconnect so the device
+/// is fully detached (otherwise the AirPods can auto-reconnect on case open and
+/// the user wouldn't see a real disconnect).
 #[tauri::command]
 async fn disconnect(cmd_sender: tauri::State<'_, CommandSender>) -> Result<(), String> {
-    send_command(&cmd_sender, DaemonCommand::Disconnect).await
+    // Tell the embedded daemon to break out of its L2CAP loop first
+    let _ = send_command(&cmd_sender, DaemonCommand::Disconnect).await;
+    // Then disconnect at the BlueZ level (Linux); Windows path is a no-op for now
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(addr) = bluez_currently_connected_airpods().await {
+            bluez_disconnect(addr).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Tauri command: connect to a paired AirPods by MAC address.
+/// Once BlueZ reports the device connected, the embedded daemon's loop picks it
+/// up automatically and runs the AAP handshake.
+#[tauri::command]
+async fn connect(address: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let addr: bluer::Address = address
+            .parse()
+            .map_err(|e| format!("invalid MAC '{address}': {e}"))?;
+        bluez_connect(addr).await?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = address;
+        Err("connect not supported on this platform yet".to_string())
+    }
+}
+
+/// Tauri command: list paired AirPods known to BlueZ.
+#[tauri::command]
+async fn list_paired() -> Result<Vec<PairedDevice>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        bluez_list_paired_airpods().await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct PairedDevice {
+    address: String,
+    name: String,
+    connected: bool,
+}
+
+#[cfg(target_os = "linux")]
+async fn bluez_connect(address: bluer::Address) -> Result<(), String> {
+    let session = bluer::Session::new()
+        .await
+        .map_err(|e| format!("BlueZ session: {e}"))?;
+    let adapter = session
+        .default_adapter()
+        .await
+        .map_err(|e| format!("BlueZ adapter: {e}"))?;
+    let device = adapter
+        .device(address)
+        .map_err(|e| format!("BlueZ device {address}: {e}"))?;
+    device
+        .connect()
+        .await
+        .map_err(|e| format!("BlueZ connect: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn bluez_disconnect(address: bluer::Address) -> Result<(), String> {
+    let session = bluer::Session::new()
+        .await
+        .map_err(|e| format!("BlueZ session: {e}"))?;
+    let adapter = session
+        .default_adapter()
+        .await
+        .map_err(|e| format!("BlueZ adapter: {e}"))?;
+    let device = adapter
+        .device(address)
+        .map_err(|e| format!("BlueZ device {address}: {e}"))?;
+    device
+        .disconnect()
+        .await
+        .map_err(|e| format!("BlueZ disconnect: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn bluez_currently_connected_airpods() -> Option<bluer::Address> {
+    let session = bluer::Session::new().await.ok()?;
+    let adapter = session.default_adapter().await.ok()?;
+    for addr in adapter.device_addresses().await.ok()? {
+        if let Ok(device) = adapter.device(addr) {
+            if device.is_connected().await.unwrap_or(false) && bluez_is_airpods(&device).await {
+                return Some(addr);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+async fn bluez_list_paired_airpods() -> Result<Vec<PairedDevice>, String> {
+    let session = bluer::Session::new()
+        .await
+        .map_err(|e| format!("BlueZ session: {e}"))?;
+    let adapter = session
+        .default_adapter()
+        .await
+        .map_err(|e| format!("BlueZ adapter: {e}"))?;
+    let addrs = adapter
+        .device_addresses()
+        .await
+        .map_err(|e| format!("device addresses: {e}"))?;
+    let mut out = Vec::new();
+    for addr in addrs {
+        if let Ok(device) = adapter.device(addr) {
+            let paired = device.is_paired().await.unwrap_or(false);
+            if paired && bluez_is_airpods(&device).await {
+                let name = device
+                    .name()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "AirPods".to_string());
+                let connected = device.is_connected().await.unwrap_or(false);
+                out.push(PairedDevice {
+                    address: addr.to_string(),
+                    name,
+                    connected,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(target_os = "linux")]
+async fn bluez_is_airpods(device: &bluer::Device) -> bool {
+    if let Ok(Some(uuids)) = device.uuids().await {
+        for uuid in &uuids {
+            if uuid.to_string() == aap::AIRPODS_SERVICE_UUID {
+                return true;
+            }
+        }
+    }
+    if let Ok(Some(name)) = device.name().await {
+        if name.contains("AirPods") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Send a command to the daemon's L2CAP write loop
@@ -162,10 +320,13 @@ fn main() {
             set_adaptive_noise_level,
             set_one_bud_anc,
             set_volume_swipe,
+            set_mic_mode,
             set_eq_preset,
             set_auto_reconnect,
             set_start_on_login,
             disconnect,
+            connect,
+            list_paired,
         ])
         .setup(move |app| {
             // Build tray menu

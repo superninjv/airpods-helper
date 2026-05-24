@@ -28,21 +28,34 @@ function updateUI(s) {
   // Connection status
   const dot = document.getElementById("status-dot");
   const connText = document.getElementById("connection-text");
-  const cards = document.querySelectorAll("#battery-section ~ .card");
+  // Only the cards AFTER battery AND AFTER devices-card get the disabled treatment
+  const cards = document.querySelectorAll("#battery-section ~ .card:not(#devices-card)");
 
   const badge = document.getElementById("connection-badge");
+  const devicesCard = document.getElementById("devices-card");
+  const disconnectBtn = document.getElementById("btn-disconnect");
   if (s.connected) {
     dot.classList.add("connected");
     badge.classList.add("is-connected");
     connText.textContent = "Connected";
     cards.forEach((c) => c.classList.remove("disabled"));
     document.getElementById("battery-section").classList.remove("disabled");
+    // Hide devices list, show disconnect button
+    devicesCard.classList.add("hidden");
+    disconnectBtn.classList.remove("hidden");
   } else {
     dot.classList.remove("connected");
     badge.classList.remove("is-connected");
     connText.textContent = "Disconnected";
     cards.forEach((c) => c.classList.add("disabled"));
     document.getElementById("battery-section").classList.add("disabled");
+    // Show devices list, hide disconnect button
+    devicesCard.classList.remove("hidden");
+    disconnectBtn.classList.add("hidden");
+    // Refresh the list on transition into disconnected (not on every poll)
+    if (lastState && lastState.connected) {
+      refreshPairedDevices();
+    }
   }
 
   // Header
@@ -276,3 +289,88 @@ document.querySelectorAll(".eq-btn").forEach((btn) => {
     }
   });
 });
+
+// ---- Devices (paired list) ----
+
+async function refreshPairedDevices() {
+  const list = document.getElementById("device-list");
+  const empty = document.getElementById("device-list-empty");
+  try {
+    const devices = await invoke("list_paired");
+    list.innerHTML = "";
+    if (!devices || devices.length === 0) {
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+    for (const d of devices) {
+      const li = document.createElement("li");
+      li.className = "device-row";
+
+      const info = document.createElement("div");
+      info.className = "device-info";
+      const name = document.createElement("div");
+      name.className = "device-row-name";
+      name.textContent = d.name || "AirPods";
+      const mac = document.createElement("div");
+      mac.className = "device-row-mac";
+      mac.textContent = d.address;
+      info.appendChild(name);
+      info.appendChild(mac);
+
+      const btn = document.createElement("button");
+      btn.className = "btn-primary device-row-connect";
+      btn.textContent = d.connected ? "Connected" : "Connect";
+      if (d.connected) {
+        btn.disabled = true;
+      } else {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          btn.textContent = "Connecting...";
+          try {
+            await invoke("connect", { address: d.address });
+            // Poll will pick up the connected state and switch the UI
+          } catch (e) {
+            console.error("connect error:", e);
+            btn.disabled = false;
+            btn.textContent = "Connect";
+            alert("Connect failed: " + e);
+          }
+        });
+      }
+
+      li.appendChild(info);
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+  } catch (e) {
+    console.error("list_paired error:", e);
+    list.innerHTML = "";
+    empty.classList.remove("hidden");
+    empty.textContent = "Failed to list paired devices: " + e;
+  }
+}
+
+// Disconnect button in header
+document.getElementById("btn-disconnect").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-disconnect");
+  btn.disabled = true;
+  btn.textContent = "Disconnecting...";
+  try {
+    await invoke("disconnect");
+  } catch (e) {
+    console.error("disconnect error:", e);
+    alert("Disconnect failed: " + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Disconnect";
+  }
+});
+
+// Refresh button on devices card
+document
+  .getElementById("btn-refresh-devices")
+  .addEventListener("click", refreshPairedDevices);
+
+// Initial load
+refreshPairedDevices();

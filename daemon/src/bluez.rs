@@ -91,6 +91,53 @@ pub async fn connect_device(address: Address) -> bluer::Result<()> {
     Ok(())
 }
 
+/// Trigger a BlueZ-level disconnect for a device by address
+pub async fn disconnect_device(address: Address) -> bluer::Result<()> {
+    let session = Session::new().await?;
+    let adapter = session.default_adapter().await?;
+    let device = adapter.device(address)?;
+    device.disconnect().await?;
+    Ok(())
+}
+
+/// List paired AirPods (paired + AAP-capable), with their display names.
+/// Returns (address, name) tuples.
+pub async fn list_paired_airpods() -> bluer::Result<Vec<(Address, String)>> {
+    let session = Session::new().await?;
+    let adapter = session.default_adapter().await?;
+    let mut out = Vec::new();
+    for addr in adapter.device_addresses().await? {
+        if let Ok(device) = adapter.device(addr) {
+            let paired = device.is_paired().await.unwrap_or(false);
+            if paired && is_airpods(&device).await {
+                let name = device
+                    .name()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "AirPods".to_string());
+                out.push((addr, name));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Look up which paired AirPods (if any) is currently connected.
+pub async fn currently_connected_airpods() -> bluer::Result<Option<Address>> {
+    let session = Session::new().await?;
+    let adapter = session.default_adapter().await?;
+    for addr in adapter.device_addresses().await? {
+        if let Ok(device) = adapter.device(addr)
+            && device.is_connected().await.unwrap_or(false)
+            && is_airpods(&device).await
+        {
+            return Ok(Some(addr));
+        }
+    }
+    Ok(None)
+}
+
 /// Check if a BlueZ device is AirPods
 async fn is_airpods(device: &Device) -> bool {
     // Check by service UUID
