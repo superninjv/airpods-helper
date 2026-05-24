@@ -63,46 +63,66 @@ All state is funneled into a shared watch channel and exposed over D-Bus, making
 
 Three install paths are supported on Linux. Pick whichever matches your distro.
 
-### Arch (PKGBUILD)
+All three paths run `setcap` during install so you don't need a separate sudo step. After install, run `airpods-cli doctor` to verify everything is wired up.
 
-A working PKGBUILD ships in `packaging/PKGBUILD` (AUR submission pending). Build and install with:
+### Arch (PKGBUILD)
 
 ```bash
 cd packaging
 makepkg -si
-sudo setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon
 systemctl --user enable --now airpods-daemon.service
+airpods-cli doctor
 ```
+
+The `packaging/airpods-helper.install` hook handles `setcap` automatically during the pacman transaction. AUR submission is pending.
 
 ### Debian / Ubuntu (.deb)
 
 ```bash
 ./packaging/build-deb.sh
 sudo dpkg -i packaging/airpods-helper_*_amd64.deb
-sudo setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon
 systemctl --user enable --now airpods-daemon.service
+airpods-cli doctor
 ```
 
-### Any distro (from source, into `~/.local`)
+The `.deb`'s `postinst` runs `setcap` automatically.
+
+### Any distro — system-wide (recommended for from-source)
 
 ```bash
 # Requires: Rust toolchain, BlueZ dev headers (libdbus-1-dev / dbus-devel),
-# PipeWire (for EQ), and an active user systemd session
-make build
-make install
-
-# Grant L2CAP raw socket capability (required — daemon won't start without this)
-sudo setcap 'cap_net_raw,cap_net_admin+eip' ~/.local/bin/airpods-daemon
-
-# Enable and start
+# PipeWire (for EQ), libcap (for setcap), and an active user systemd session
+make install-system          # builds, installs to /usr/local, runs setcap
 systemctl --user enable --now airpods-daemon.service
+airpods-cli doctor
 ```
 
-Verify the daemon is up:
+### Any distro — per-user into `~/.local`
 
 ```bash
-airpods-cli status
-journalctl --user -u airpods-daemon -f   # logs
+make install
+sudo setcap 'cap_net_raw,cap_net_admin+eip' ~/.local/bin/airpods-daemon
+systemctl --user enable --now airpods-daemon.service
+airpods-cli doctor
+```
+
+### `airpods-cli doctor`
+
+Runs end-to-end installation checks: daemon binary present, capabilities granted, BlueZ + PipeWire running, systemd unit active, D-Bus service reachable, AirPods currently connected. Each failed check prints a concrete fix command. Add `--json` for machine-readable output.
+
+```
+$ airpods-cli doctor
+Checking airpods-helper installation...
+
+  ✓ airpods-daemon binary — found at /usr/local/bin/airpods-daemon
+  ✓ L2CAP raw socket capability — cap_net_raw + cap_net_admin set
+  ✓ BlueZ system service — org.bluez reachable on system bus
+  ✓ PipeWire — responding to `pw-cli info 0`
+  ✓ Systemd user unit — airpods-daemon.service: active
+  ✓ Daemon D-Bus service — org.costa.AirPods reachable
+  ✓ AirPods connection — connected — AirPods Pro 2 (USB-C) (FW 6F8)
+
+Everything looks good.
 ```
 
 ### Pair AirPods
@@ -165,6 +185,8 @@ airpods-cli eq off                    # disable EQ
 
 ```bash
 airpods-cli reconnect                 # trigger manual reconnect
+airpods-cli doctor                    # diagnose installation health
+airpods-cli doctor --json             # JSON output for scripting
 ```
 
 ## Architecture
@@ -325,10 +347,13 @@ Import `widget/style.css` in your AGS stylesheet for default dark theme styling.
 
 ## Troubleshooting
 
+**Start with `airpods-cli doctor`** — it runs all the checks below automatically and prints concrete fix commands for whatever is broken.
+
 **"Permission denied" on L2CAP connect:**
 ```bash
-sudo setcap 'cap_net_raw,cap_net_admin+eip' ~/.local/bin/airpods-daemon
+sudo setcap 'cap_net_raw,cap_net_admin+eip' <path-to-airpods-daemon>
 ```
+The daemon logs this exact command on startup if the capability is missing.
 
 **Daemon not detecting AirPods:**
 - Ensure AirPods are paired and connected via `bluetoothctl`

@@ -136,11 +136,18 @@ enum Command {
     },
     /// Trigger device reconnect
     Reconnect,
+    /// Diagnose installation health (binary, caps, BlueZ, PipeWire, daemon, D-Bus)
+    Doctor,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Doctor runs without requiring a working daemon — it diagnoses why one isn't.
+    if matches!(cli.command, Command::Doctor) {
+        return cmd_doctor(cli.json).await;
+    }
 
     let conn = Connection::session().await.map_err(|e| {
         anyhow::anyhow!("failed to connect to session bus: {e}")
@@ -172,6 +179,7 @@ async fn main() -> anyhow::Result<()> {
             proxy.reconnect().await?;
             println!("reconnect requested");
         }
+        Command::Doctor => unreachable!("handled before proxy creation"),
     }
 
     Ok(())
@@ -415,4 +423,249 @@ fn parse_toggle(s: &str) -> anyhow::Result<bool> {
         "off" | "false" | "0" | "no" => Ok(false),
         _ => anyhow::bail!("invalid toggle: {s} (use: on/off)"),
     }
+}
+
+struct Check {
+    name: &'static str,
+    ok: bool,
+    detail: String,
+    fix: Option<String>,
+}
+
+async fn cmd_doctor(json: bool) -> anyhow::Result<()> {
+    use std::process::Command as SysCommand;
+
+    let mut checks: Vec<Check> = Vec::new();
+
+    // 1. Daemon binary on PATH or in well-known locations
+    let candidates = [
+        std::env::var("HOME").map(|h| format!("{h}/.local/bin/airpods-daemon")).ok(),
+        Some("/usr/local/bin/airpods-daemon".to_string()),
+        Some("/usr/bin/airpods-daemon".to_string()),
+    ];
+    let mut daemon_path: Option<String> = None;
+    for c in candidates.into_iter().flatten() {
+        if std::path::Path::new(&c).exists() {
+            daemon_path = Some(c);
+            break;
+        }
+    }
+    let path_for_msg = daemon_path.clone();
+    match &path_for_msg {
+        Some(p) => checks.push(Check {
+            name: "airpods-daemon binary",
+            ok: true,
+            detail: format!("found at {p}"),
+            fix: None,
+        }),
+        None => checks.push(Check {
+            name: "airpods-daemon binary",
+            ok: false,
+            detail: "not found in ~/.local/bin, /usr/local/bin, or /usr/bin".into(),
+            fix: Some("Install: `make install`, the .deb, or PKGBUILD".into()),
+        }),
+    }
+
+    // 2. Capabilities on the binary
+    if let Some(p) = &daemon_path {
+        let out = SysCommand::new("getcap").arg(p).output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                let has_caps = text.contains("cap_net_raw") && text.contains("cap_net_admin");
+                checks.push(Check {
+                    name: "L2CAP raw socket capability",
+                    ok: has_caps,
+                    detail: if has_caps {
+                        "cap_net_raw + cap_net_admin set".into()
+                    } else {
+                        format!("missing — getcap reports: {}", text.trim())
+                    },
+                    fix: if has_caps {
+                        None
+                    } else {
+                        Some(format!("sudo setcap 'cap_net_raw,cap_net_admin+eip' {p}"))
+                    },
+                });
+            }
+            _ => checks.push(Check {
+                name: "L2CAP raw socket capability",
+                ok: false,
+                detail: "`getcap` not available — can't verify".into(),
+                fix: Some("Install libcap (Arch: `pacman -S libcap`, Debian: `apt install libcap2-bin`)".into()),
+            }),
+        }
+    }
+
+    // 3. BlueZ available on system bus
+    let bluez_ok = match zbus::Connection::system().await {
+        Ok(c) => zbus::Proxy::new(
+            &c,
+            "org.bluez",
+            "/org/bluez",
+            "org.freedesktop.DBus.Peer",
+        )
+        .await
+        .is_ok(),
+        Err(_) => false,
+    };
+    checks.push(Check {
+        name: "BlueZ system service",
+        ok: bluez_ok,
+        detail: if bluez_ok {
+            "org.bluez reachable on system bus".into()
+        } else {
+            "org.bluez not found".into()
+        },
+        fix: if bluez_ok {
+            None
+        } else {
+            Some("Start BlueZ: `sudo systemctl enable --now bluetooth.service`".into())
+        },
+    });
+
+    // 4. PipeWire running
+    let pw_ok = SysCommand::new("pw-cli")
+        .args(["info", "0"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    checks.push(Check {
+        name: "PipeWire",
+        ok: pw_ok,
+        detail: if pw_ok {
+            "responding to `pw-cli info 0`".into()
+        } else {
+            "not responding (EQ requires PipeWire + WirePlumber)".into()
+        },
+        fix: if pw_ok {
+            None
+        } else {
+            Some("Start PipeWire: `systemctl --user enable --now pipewire.service wireplumber.service`".into())
+        },
+    });
+
+    // 5. User systemd unit installed + active
+    let unit_status = SysCommand::new("systemctl")
+        .args(["--user", "is-active", "airpods-daemon.service"])
+        .output();
+    let unit_active = matches!(&unit_status, Ok(o) if o.status.success());
+    let unit_state = unit_status
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    checks.push(Check {
+        name: "Systemd user unit",
+        ok: unit_active,
+        detail: format!("airpods-daemon.service: {unit_state}"),
+        fix: if unit_active {
+            None
+        } else {
+            Some("systemctl --user enable --now airpods-daemon.service".into())
+        },
+    });
+
+    // 6. D-Bus service reachable
+    let mut device_connected: Option<bool> = None;
+    let mut device_label: Option<String> = None;
+    let dbus_ok = match Connection::session().await {
+        Ok(conn) => match AirPodsProxy::new(&conn).await {
+            Ok(p) => {
+                if let Ok(c) = p.connected().await {
+                    device_connected = Some(c);
+                }
+                if device_connected == Some(true) {
+                    let name = p.model_name().await.unwrap_or_default();
+                    let fw = p.firmware().await.unwrap_or_default();
+                    device_label = Some(if fw.is_empty() {
+                        name
+                    } else {
+                        format!("{name} (FW {fw})")
+                    });
+                }
+                true
+            }
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
+    checks.push(Check {
+        name: "Daemon D-Bus service",
+        ok: dbus_ok,
+        detail: if dbus_ok {
+            "org.costa.AirPods reachable".into()
+        } else {
+            "org.costa.AirPods unreachable — daemon not running or D-Bus activation broken".into()
+        },
+        fix: if dbus_ok {
+            None
+        } else {
+            Some("Start the daemon: `systemctl --user start airpods-daemon.service`, then check `journalctl --user -u airpods-daemon -n 50`".into())
+        },
+    });
+
+    // 7. AirPods connection state (informational only — failure isn't a config bug)
+    if let Some(connected) = device_connected {
+        let label = device_label.unwrap_or_default();
+        checks.push(Check {
+            name: "AirPods connection",
+            ok: connected,
+            detail: if connected {
+                if label.is_empty() {
+                    "connected".into()
+                } else {
+                    format!("connected — {label}")
+                }
+            } else {
+                "no AirPods currently connected (informational)".into()
+            },
+            fix: if connected {
+                None
+            } else {
+                Some("Connect via `bluetoothctl connect <MAC>` or just open the AirPods case near a paired adapter".into())
+            },
+        });
+    }
+
+    if json {
+        let arr: Vec<_> = checks
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "name": c.name,
+                    "ok": c.ok,
+                    "detail": c.detail,
+                    "fix": c.fix,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "checks": arr }))?);
+        return Ok(());
+    }
+
+    println!("Checking airpods-helper installation...\n");
+    let mut failures = 0;
+    for c in &checks {
+        let mark = if c.ok { "\u{2713}" } else { "\u{2717}" };
+        println!("  {mark} {} — {}", c.name, c.detail);
+        if !c.ok {
+            if let Some(fix) = &c.fix {
+                println!("    Fix: {fix}");
+            }
+            // Don't count the AirPods-connection check as a failure
+            if c.name != "AirPods connection" {
+                failures += 1;
+            }
+        }
+    }
+    println!();
+    if failures == 0 {
+        println!("Everything looks good.");
+    } else {
+        println!("Found {failures} issue(s). See fix hints above.");
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
