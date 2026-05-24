@@ -340,10 +340,32 @@ Import `widget/style.css` in your AGS stylesheet for default dark theme styling.
 
 ## System Requirements
 
+**Hard requirements (every feature except EQ):**
 - **Linux** with BlueZ 5.x
-- **PipeWire** + WirePlumber (for EQ)
+- **D-Bus** session + system bus (universal)
 - **Bluetooth adapter** supporting BR/EDR (classic Bluetooth)
-- AirPods Pro, AirPods Pro 2, AirPods Max, AirPods 3/4 (any model with AAP support)
+- **`libcap`** (for the post-install `setcap`)
+- AirPods Pro, AirPods Pro 2/3, AirPods Max, AirPods 3/4 (any model with AAP support)
+
+**Optional — only needed for parametric EQ:**
+- **PipeWire** + **WirePlumber**
+
+EQ is the only feature that depends on PipeWire. Everything else — battery, ANC, ear detection (including MPRIS pause/resume), pair / quick-pair / connect, mic mode — runs on top of BlueZ + D-Bus only, so PulseAudio-only systems are supported (you just won't have the EQ feature, which is [currently broken anyway](#known-limitations)).
+
+### Distro compatibility
+
+| Distro | PipeWire default since | Status |
+|---|---|---|
+| Fedora | 34 (Apr 2021) | full support |
+| Ubuntu | 22.10 (Oct 2022) | full support |
+| Debian | 12 Bookworm (Jun 2023) | full support |
+| Arch / Manjaro | rolling | full support (PipeWire is the standard pick) |
+| openSUSE | Tumbleweed + Leap 15.5+ | full support |
+| Pop!\_OS / Mint | follow upstream | full support on modern releases |
+| Ubuntu 20.04 LTS | PulseAudio only | works without EQ |
+| Devuan / MX Linux | varies (often PulseAudio) | works without EQ |
+
+The PKGBUILD lists `pipewire` and `wireplumber` as `optdepends`; the `.deb` lists them as `Recommends`. Neither is a hard install requirement.
 
 ## Troubleshooting
 

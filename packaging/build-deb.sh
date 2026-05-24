@@ -47,8 +47,8 @@ Version: $VERSION
 Section: sound
 Priority: optional
 Architecture: $ARCH
-Depends: bluez, dbus, pipewire, libcap2-bin
-Recommends: wireplumber
+Depends: bluez, dbus, libcap2-bin
+Recommends: pipewire, wireplumber
 Maintainer: Jack Hernandez <jack@synoros.io>
 Description: Native AirPods support for Linux
  ANC control, battery levels, ear detection with MPRIS auto-pause,
