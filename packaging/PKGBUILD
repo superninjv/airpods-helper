@@ -6,10 +6,11 @@ pkgdesc="Native AirPods support for Linux — ANC, battery, EQ, ear detection, C
 arch=('x86_64')
 url="https://github.com/superninjv/airpods-helper"
 license=('MIT')
-depends=('bluez' 'dbus' 'pipewire' 'libcap')
+depends=('bluez' 'dbus' 'libcap')
 makedepends=('rust' 'cargo')
-optdepends=('ags: GTK4 desktop widgets for bar integration'
-            'wireplumber: required for parametric EQ filter chains')
+optdepends=('pipewire: parametric EQ filter chains (EQ is the only PipeWire-only feature)'
+            'wireplumber: required alongside pipewire for the EQ filter chain'
+            'ags: GTK4 desktop widgets for bar integration')
 install="$pkgname.install"
 source=("$pkgname-$pkgver.tar.gz::https://github.com/superninjv/$pkgname/archive/v$pkgver.tar.gz"
         "$pkgname.install")
