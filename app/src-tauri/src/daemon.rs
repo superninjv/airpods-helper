@@ -44,7 +44,7 @@ async fn run_once(state: SharedState, cmd_sender: CommandSender) -> Result<(), S
         .map_err(|e| format!("BlueZ adapter: {e}"))?;
     info!("using BlueZ adapter: {}", adapter.name());
 
-    let address = find_airpods(&adapter).await?;
+    let address = find_airpods(&adapter, &state).await?;
     info!("found AirPods at {address}");
 
     // Connect L2CAP
@@ -186,21 +186,41 @@ async fn run_once(state: SharedState, cmd_sender: CommandSender) -> Result<(), S
     Ok(())
 }
 
-/// Find AirPods via BlueZ -- check already-connected devices, then wait for connection
+/// Find AirPods via BlueZ -- check already-connected devices (preferring the
+/// user-pinned MAC if set), then wait for connection.
 #[cfg(target_os = "linux")]
-async fn find_airpods(adapter: &bluer::Adapter) -> Result<bluer::Address, String> {
+async fn find_airpods(
+    adapter: &bluer::Adapter,
+    state: &SharedState,
+) -> Result<bluer::Address, String> {
     use bluer::AdapterEvent;
     use futures::StreamExt;
 
-    // Check already-connected devices
+    let preferred = state.current().preferred_device;
+    let preferred_addr: Option<bluer::Address> = if preferred.is_empty() {
+        None
+    } else {
+        preferred.parse().ok()
+    };
+
+    // Check already-connected devices — prefer the pinned MAC if it's there.
     let addrs = adapter
         .device_addresses()
         .await
         .map_err(|e| format!("device addresses: {e}"))?;
-    for addr in addrs {
-        if let Ok(device) = adapter.device(addr) {
+    if let Some(pinned) = preferred_addr {
+        if addrs.contains(&pinned) {
+            if let Ok(device) = adapter.device(pinned) {
+                if device.is_connected().await.unwrap_or(false) && is_airpods(&device).await {
+                    return Ok(pinned);
+                }
+            }
+        }
+    }
+    for addr in &addrs {
+        if let Ok(device) = adapter.device(*addr) {
             if device.is_connected().await.unwrap_or(false) && is_airpods(&device).await {
-                return Ok(addr);
+                return Ok(*addr);
             }
         }
     }
@@ -214,6 +234,12 @@ async fn find_airpods(adapter: &bluer::Adapter) -> Result<bluer::Address, String
 
     while let Some(event) = events.next().await {
         if let AdapterEvent::DeviceAdded(addr) = event {
+            // If a MAC pin is set, skip non-matching devices.
+            if let Some(pinned) = preferred_addr {
+                if addr != pinned {
+                    continue;
+                }
+            }
             if let Ok(device) = adapter.device(addr) {
                 if device.is_connected().await.unwrap_or(false) && is_airpods(&device).await {
                     return Ok(addr);
