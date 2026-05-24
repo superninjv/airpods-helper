@@ -100,6 +100,67 @@ pub async fn disconnect_device(address: Address) -> bluer::Result<()> {
     Ok(())
 }
 
+/// Pair (and trust) an AirPods device by MAC address. Registers a transient
+/// NoInputNoOutput just-works agent for the duration of the attempt, starts
+/// discovery if the device hasn't been seen yet, then performs the BlueZ Pair
+/// followed by SetTrusted(true) so the AirPods auto-reconnect on case-open.
+///
+/// Returns an error if the device doesn't appear within 20 seconds — usually
+/// means the AirPods aren't in pairing mode (case open, status light blinking
+/// white). Pair calls itself can also fail if the AAP-side accepts a different
+/// pairing flavor (Magic Pairing), but standard just-works covers the supported
+/// AirPods we target.
+pub async fn pair_and_trust(address: Address) -> bluer::Result<()> {
+    use std::time::Duration;
+
+    let session = Session::new().await?;
+
+    // Transient just-works agent — dropped at end of scope, unregisters.
+    let agent = bluer::agent::Agent::default();
+    let _agent_handle = session.register_agent(agent).await?;
+
+    let adapter = session.default_adapter().await?;
+    adapter.set_powered(true).await?;
+    let _ = adapter.set_pairable(true).await;
+
+    // Start discovery if the device isn't already known. Holding the stream
+    // alive keeps discovery active; dropping it stops discovery.
+    let mut _discovery_stream = None;
+    let known = adapter.device_addresses().await.unwrap_or_default();
+    if !known.contains(&address) {
+        info!("device {address} unknown, starting discovery");
+        _discovery_stream = Some(adapter.discover_devices().await?);
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if adapter
+                .device_addresses()
+                .await
+                .unwrap_or_default()
+                .contains(&address)
+            {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(bluer::Error {
+                    kind: bluer::ErrorKind::NotFound,
+                    message: format!(
+                        "device {address} not seen within 20s — make sure AirPods are in pairing mode (case open, status light flashing white)"
+                    ),
+                });
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    let device = adapter.device(address)?;
+    info!("pairing {address}");
+    device.pair().await?;
+    device.set_trusted(true).await?;
+    info!("paired and trusted {address}");
+    Ok(())
+}
+
 /// List paired AirPods (paired + AAP-capable), with their display names.
 /// Returns (address, name) tuples.
 pub async fn list_paired_airpods() -> bluer::Result<Vec<(Address, String)>> {

@@ -88,6 +88,7 @@ trait AirPods {
     fn connect_to(&self, address: &str) -> zbus::Result<()>;
     fn disconnect(&self) -> zbus::Result<()>;
     fn list_paired(&self) -> zbus::Result<Vec<(String, String)>>;
+    fn pair(&self, address: &str) -> zbus::Result<()>;
 }
 
 #[derive(Parser)]
@@ -144,6 +145,11 @@ enum Command {
         /// MAC address (e.g. AA:BB:CC:DD:EE:FF)
         address: String,
     },
+    /// Pair a new AirPods (open case, status light flashing white)
+    Pair {
+        /// MAC address (e.g. AA:BB:CC:DD:EE:FF)
+        address: String,
+    },
     /// Disconnect the currently-connected AirPods
     Disconnect,
     /// List paired AirPods known to BlueZ
@@ -194,6 +200,11 @@ async fn main() -> anyhow::Result<()> {
         Command::Connect { address } => {
             proxy.connect_to(&address).await?;
             println!("connect requested: {address}");
+        }
+        Command::Pair { address } => {
+            println!("pairing {address}... (open the AirPods case if you haven't)");
+            proxy.pair(&address).await?;
+            println!("paired and trusted: {address}");
         }
         Command::Disconnect => {
             proxy.disconnect().await?;

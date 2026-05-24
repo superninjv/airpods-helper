@@ -372,5 +372,47 @@ document
   .getElementById("btn-refresh-devices")
   .addEventListener("click", refreshPairedDevices);
 
+// Manual pair form
+const pairBtn = document.getElementById("btn-pair");
+const pairInput = document.getElementById("pair-mac");
+const pairHint = document.getElementById("pair-hint");
+
+function isValidMac(mac) {
+  return /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/.test(mac.trim());
+}
+
+async function attemptPair() {
+  const address = pairInput.value.trim().toUpperCase();
+  if (!isValidMac(address)) {
+    pairHint.textContent = "Invalid MAC — expected AA:BB:CC:DD:EE:FF";
+    pairHint.classList.add("is-error");
+    return;
+  }
+  pairHint.classList.remove("is-error");
+  pairBtn.disabled = true;
+  pairInput.disabled = true;
+  pairBtn.textContent = "Pairing...";
+  pairHint.textContent = "Waiting for AirPods (up to 20s). Keep the case open.";
+  try {
+    await invoke("pair", { address });
+    pairHint.textContent = `Paired ${address}. You can connect now.`;
+    pairInput.value = "";
+    await refreshPairedDevices();
+  } catch (e) {
+    console.error("pair error:", e);
+    pairHint.classList.add("is-error");
+    pairHint.textContent = "Pair failed: " + e;
+  } finally {
+    pairBtn.disabled = false;
+    pairInput.disabled = false;
+    pairBtn.textContent = "Pair";
+  }
+}
+
+pairBtn.addEventListener("click", attemptPair);
+pairInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") attemptPair();
+});
+
 // Initial load
 refreshPairedDevices();
