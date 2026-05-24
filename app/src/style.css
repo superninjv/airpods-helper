@@ -671,3 +671,54 @@ body::-webkit-scrollbar-thumb:hover {
   background: var(--card-hover);
   color: var(--text);
 }
+
+.pair-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.pair-form-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.pair-form-row {
+  display: flex;
+  gap: 8px;
+}
+
+.pair-input {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--card-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.pair-input:focus {
+  border-color: var(--accent);
+}
+
+.pair-input:disabled {
+  opacity: 0.5;
+}
+
+.pair-form-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pair-form-hint.is-error {
+  color: var(--red);
+}

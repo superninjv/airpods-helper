@@ -223,6 +223,20 @@ impl AirPodsInterface {
         Ok(())
     }
 
+    /// Pair (and trust) an AirPods device by MAC address. AirPods must be in
+    /// pairing mode (case open, status light flashing white). Up to ~20s to
+    /// complete; surfaces a Failed error with a hint if discovery times out.
+    async fn pair(&self, address: &str) -> zbus::fdo::Result<()> {
+        info!("Pair requested via D-Bus: {address}");
+        let addr: bluer::Address = address
+            .parse()
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("invalid MAC '{address}': {e}")))?;
+        crate::bluez::pair_and_trust(addr)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ pair failed: {e}")))?;
+        Ok(())
+    }
+
     /// List paired AirPods devices known to BlueZ. Returns (mac, name) tuples.
     async fn list_paired(&self) -> zbus::fdo::Result<Vec<(String, String)>> {
         let paired = crate::bluez::list_paired_airpods()

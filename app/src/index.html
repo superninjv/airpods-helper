@@ -34,9 +34,25 @@
       </div>
       <ul class="device-list" id="device-list"></ul>
       <p class="device-list-empty hidden" id="device-list-empty">
-        No paired AirPods yet. Open your case near this machine and pair via
-        <code>bluetoothctl</code> or your desktop's Bluetooth settings.
+        No paired AirPods yet. Open your case (status light flashing white) and pair below, or use <code>bluetoothctl</code>.
       </p>
+      <div class="pair-form">
+        <div class="pair-form-label">Pair by MAC</div>
+        <div class="pair-form-row">
+          <input
+            type="text"
+            id="pair-mac"
+            class="pair-input"
+            placeholder="AA:BB:CC:DD:EE:FF"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="btn-pair" class="btn-primary">Pair</button>
+        </div>
+        <div class="pair-form-hint" id="pair-hint">
+          Open the AirPods case before clicking Pair.
+        </div>
+      </div>
     </section>
 
     <!-- Battery -->

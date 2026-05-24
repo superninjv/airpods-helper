@@ -167,6 +167,25 @@ async fn list_paired() -> Result<Vec<PairedDevice>, String> {
     }
 }
 
+/// Tauri command: pair (and trust) a new AirPods by MAC address.
+/// Registers a transient just-works agent for the attempt; AirPods must be in
+/// pairing mode (case open, status light flashing white).
+#[tauri::command]
+async fn pair(address: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let addr: bluer::Address = address
+            .parse()
+            .map_err(|e| format!("invalid MAC '{address}': {e}"))?;
+        bluez_pair_and_trust(addr).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = address;
+        Err("pair not supported on this platform yet".to_string())
+    }
+}
+
 #[derive(serde::Serialize)]
 struct PairedDevice {
     address: String,
@@ -263,6 +282,69 @@ async fn bluez_list_paired_airpods() -> Result<Vec<PairedDevice>, String> {
 }
 
 #[cfg(target_os = "linux")]
+async fn bluez_pair_and_trust(address: bluer::Address) -> Result<(), String> {
+    use std::time::Duration;
+
+    let session = bluer::Session::new()
+        .await
+        .map_err(|e| format!("BlueZ session: {e}"))?;
+
+    let agent = bluer::agent::Agent::default();
+    let _agent_handle = session
+        .register_agent(agent)
+        .await
+        .map_err(|e| format!("register agent: {e}"))?;
+
+    let adapter = session
+        .default_adapter()
+        .await
+        .map_err(|e| format!("BlueZ adapter: {e}"))?;
+    adapter
+        .set_powered(true)
+        .await
+        .map_err(|e| format!("power on: {e}"))?;
+    let _ = adapter.set_pairable(true).await;
+
+    let mut _discovery_stream = None;
+    let known = adapter.device_addresses().await.unwrap_or_default();
+    if !known.contains(&address) {
+        _discovery_stream = Some(
+            adapter
+                .discover_devices()
+                .await
+                .map_err(|e| format!("discover: {e}"))?,
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if adapter
+                .device_addresses()
+                .await
+                .unwrap_or_default()
+                .contains(&address)
+            {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "device {address} not seen within 20s — make sure the case is open and the status light is flashing white"
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    let device = adapter
+        .device(address)
+        .map_err(|e| format!("device: {e}"))?;
+    device.pair().await.map_err(|e| format!("pair: {e}"))?;
+    device
+        .set_trusted(true)
+        .await
+        .map_err(|e| format!("set trusted: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 async fn bluez_is_airpods(device: &bluer::Device) -> bool {
     if let Ok(Some(uuids)) = device.uuids().await {
         for uuid in &uuids {
@@ -327,6 +409,7 @@ fn main() {
             disconnect,
             connect,
             list_paired,
+            pair,
         ])
         .setup(move |app| {
             // Build tray menu
