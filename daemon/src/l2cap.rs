@@ -36,7 +36,19 @@ pub async fn run(
     // Retry L2CAP connect — the channel may not be ready immediately after BT connect
     let mut seq: Option<SeqPacket> = None;
     for attempt in 1..=5 {
-        let socket = Socket::new_seq_packet()?;
+        let socket = match Socket::new_seq_packet() {
+            Ok(s) => s,
+            // EPERM=1, EACCES=13 — missing cap_net_raw is the common cause
+            Err(e) if matches!(e.raw_os_error(), Some(1) | Some(13)) => {
+                error!(
+                    "L2CAP raw socket creation denied (EPERM/EACCES). The daemon binary is missing cap_net_raw. \
+                     Fix with: sudo setcap 'cap_net_raw,cap_net_admin+eip' <path-to-airpods-daemon>  \
+                     (or run `airpods-cli doctor` for a full diagnosis)"
+                );
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
         let addr = SocketAddr::new(address, bluer::AddressType::BrEdr, aap::AAP_PSM);
         match socket.connect(addr).await {
             Ok(s) => {

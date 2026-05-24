@@ -1,0 +1,26 @@
+post_install() {
+    # Grant L2CAP raw socket capability — pacman runs this as root,
+    # so the user doesn't need a separate sudo step.
+    setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon 2>/dev/null || \
+        echo "  warning: setcap failed; run manually: sudo setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon"
+
+    cat <<'EOF'
+
+  airpods-helper installed. Next steps:
+    systemctl --user enable --now airpods-daemon.service
+    airpods-cli doctor
+
+  Docs: https://github.com/superninjv/airpods-helper
+EOF
+}
+
+post_upgrade() {
+    # Caps are wiped when the binary is replaced — re-apply on upgrade.
+    setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon 2>/dev/null || true
+    # Pick up any unit-file changes.
+    systemctl --global daemon-reload 2>/dev/null || true
+}
+
+post_remove() {
+    systemctl --global daemon-reload 2>/dev/null || true
+}

@@ -47,7 +47,7 @@ Version: $VERSION
 Section: sound
 Priority: optional
 Architecture: $ARCH
-Depends: bluez, dbus, pipewire
+Depends: bluez, dbus, pipewire, libcap2-bin
 Recommends: wireplumber
 Maintainer: Jack Hernandez <jack@synoros.io>
 Description: Native AirPods support for Linux
@@ -59,8 +59,19 @@ EOF
 # Post-install
 cat > "packaging/$STAGING/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
-setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon 2>/dev/null || true
-echo ">> Enable the daemon: systemctl --user enable --now airpods-daemon.service"
+# Grant L2CAP raw socket capability — we have root here so the user doesn't need a separate sudo step.
+if ! setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon 2>/dev/null; then
+    echo ">> setcap failed — run manually: sudo setcap 'cap_net_raw,cap_net_admin+eip' /usr/bin/airpods-daemon"
+fi
+
+cat <<'MSG'
+
+  airpods-helper installed. Next steps:
+    systemctl --user enable --now airpods-daemon.service
+    airpods-cli doctor
+
+  Docs: https://github.com/superninjv/airpods-helper
+MSG
 EOF
 chmod 755 "packaging/$STAGING/DEBIAN/postinst"
 
