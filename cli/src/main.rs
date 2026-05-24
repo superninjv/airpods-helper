@@ -85,6 +85,9 @@ trait AirPods {
     fn disable_eq(&self) -> zbus::Result<()>;
     fn list_eq_presets(&self) -> zbus::Result<Vec<String>>;
     fn reconnect(&self) -> zbus::Result<()>;
+    fn connect_to(&self, address: &str) -> zbus::Result<()>;
+    fn disconnect(&self) -> zbus::Result<()>;
+    fn list_paired(&self) -> zbus::Result<Vec<(String, String)>>;
 }
 
 #[derive(Parser)]
@@ -134,8 +137,17 @@ enum Command {
         /// Preset name, "list", or "off" (omit to show current)
         action: Option<String>,
     },
-    /// Trigger device reconnect
+    /// Trigger device reconnect (uses last-connected device)
     Reconnect,
+    /// Connect to a paired AirPods by MAC address
+    Connect {
+        /// MAC address (e.g. AA:BB:CC:DD:EE:FF)
+        address: String,
+    },
+    /// Disconnect the currently-connected AirPods
+    Disconnect,
+    /// List paired AirPods known to BlueZ
+    Paired,
     /// Diagnose installation health (binary, caps, BlueZ, PipeWire, daemon, D-Bus)
     Doctor,
 }
@@ -178,6 +190,30 @@ async fn main() -> anyhow::Result<()> {
         Command::Reconnect => {
             proxy.reconnect().await?;
             println!("reconnect requested");
+        }
+        Command::Connect { address } => {
+            proxy.connect_to(&address).await?;
+            println!("connect requested: {address}");
+        }
+        Command::Disconnect => {
+            proxy.disconnect().await?;
+            println!("disconnect requested");
+        }
+        Command::Paired => {
+            let devices = proxy.list_paired().await?;
+            if cli.json {
+                let arr: Vec<_> = devices
+                    .iter()
+                    .map(|(a, n)| serde_json::json!({ "address": a, "name": n }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "paired": arr }))?);
+            } else if devices.is_empty() {
+                println!("no paired AirPods");
+            } else {
+                for (addr, name) in devices {
+                    println!("{addr}  {name}");
+                }
+            }
         }
         Command::Doctor => unreachable!("handled before proxy creation"),
     }

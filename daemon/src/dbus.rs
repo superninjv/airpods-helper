@@ -194,6 +194,46 @@ impl AirPodsInterface {
         Ok(())
     }
 
+    /// Trigger a BlueZ-level connect to the given AirPods MAC (e.g. "AA:BB:CC:DD:EE:FF").
+    /// The L2CAP/AAP handshake fires automatically once BlueZ reports the device connected.
+    async fn connect_to(&self, address: &str) -> zbus::fdo::Result<()> {
+        info!("ConnectTo requested via D-Bus: {address}");
+        let addr: bluer::Address = address
+            .parse()
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("invalid MAC '{address}': {e}")))?;
+        crate::bluez::connect_device(addr)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ connect failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Disconnect the currently-connected AirPods at the BlueZ level. The L2CAP
+    /// session closes naturally as a side-effect.
+    async fn disconnect(&self) -> zbus::fdo::Result<()> {
+        info!("Disconnect requested via D-Bus");
+        let Some(addr) = crate::bluez::currently_connected_airpods()
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ query failed: {e}")))?
+        else {
+            return Err(zbus::fdo::Error::Failed("no AirPods currently connected".into()));
+        };
+        crate::bluez::disconnect_device(addr)
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ disconnect failed: {e}")))?;
+        Ok(())
+    }
+
+    /// List paired AirPods devices known to BlueZ. Returns (mac, name) tuples.
+    async fn list_paired(&self) -> zbus::fdo::Result<Vec<(String, String)>> {
+        let paired = crate::bluez::list_paired_airpods()
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ query failed: {e}")))?;
+        Ok(paired
+            .into_iter()
+            .map(|(addr, name)| (addr.to_string(), name))
+            .collect())
+    }
+
     // --- EQ Properties ---
 
     #[zbus(property)]

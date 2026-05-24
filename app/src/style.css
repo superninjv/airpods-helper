@@ -547,3 +547,127 @@ body::-webkit-scrollbar-thumb:hover {
 .card:nth-child(5) { animation-delay: 0.2s; }
 .card:nth-child(6) { animation-delay: 0.25s; }
 .card:nth-child(7) { animation-delay: 0.3s; }
+
+/* ---- Devices panel (pair / connect / disconnect) ---- */
+
+.header-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.device-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.device-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.device-row-name {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.device-row-mac {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.3px;
+}
+
+.device-list-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 8px 4px;
+}
+
+.device-list-empty code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-icon {
+  font-family: var(--font);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-primary {
+  padding: 6px 14px;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-secondary {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--border-accent);
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.btn-icon:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
