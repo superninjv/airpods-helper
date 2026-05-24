@@ -89,6 +89,10 @@ trait AirPods {
     fn disconnect(&self) -> zbus::Result<()>;
     fn list_paired(&self) -> zbus::Result<Vec<(String, String)>>;
     fn pair(&self, address: &str) -> zbus::Result<()>;
+    fn quick_pair_scan(
+        &self,
+        duration_secs: u32,
+    ) -> zbus::Result<Vec<(String, String, String, i16, bool)>>;
 }
 
 #[derive(Parser)]
@@ -150,6 +154,12 @@ enum Command {
         /// MAC address (e.g. AA:BB:CC:DD:EE:FF)
         address: String,
     },
+    /// Quick-pair scan — look for nearby unpaired AirPods (case open) over LE
+    Scan {
+        /// Scan duration in seconds (default 10)
+        #[arg(long, default_value_t = 10)]
+        duration: u32,
+    },
     /// Disconnect the currently-connected AirPods
     Disconnect,
     /// List paired AirPods known to BlueZ
@@ -205,6 +215,37 @@ async fn main() -> anyhow::Result<()> {
             println!("pairing {address}... (open the AirPods case if you haven't)");
             proxy.pair(&address).await?;
             println!("paired and trusted: {address}");
+        }
+        Command::Scan { duration } => {
+            if !cli.json {
+                println!("scanning for nearby AirPods for {duration}s... (open a case to make AirPods discoverable)");
+            }
+            let candidates = proxy.quick_pair_scan(duration).await?;
+            if cli.json {
+                let arr: Vec<_> = candidates
+                    .iter()
+                    .map(|(a, n, m, r, p)| {
+                        serde_json::json!({
+                            "address": a, "name": n, "model": m,
+                            "rssi": r, "in_pair_mode": p,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "candidates": arr }))?
+                );
+            } else if candidates.is_empty() {
+                println!("no AirPods candidates found");
+            } else {
+                println!("\nfound {} candidate(s):\n", candidates.len());
+                for (addr, name, model, rssi, in_pair_mode) in candidates {
+                    let mark = if in_pair_mode { "★" } else { " " };
+                    println!("  {mark} {addr}  {model:32}  RSSI {rssi:>4}  {name}");
+                }
+                println!("\n★ = looks like it's in pairing mode");
+                println!("  pair with: airpods-cli pair <MAC>");
+            }
         }
         Command::Disconnect => {
             proxy.disconnect().await?;

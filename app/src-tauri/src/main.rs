@@ -167,6 +167,30 @@ async fn list_paired() -> Result<Vec<PairedDevice>, String> {
     }
 }
 
+#[derive(serde::Serialize)]
+struct QuickPairCandidate {
+    address: String,
+    name: String,
+    model: String,
+    rssi: i16,
+    in_pair_mode: bool,
+}
+
+/// Tauri command: run an LE scan for `duration_secs` and return any nearby
+/// AirPods broadcasting Apple Continuity proximity records.
+#[tauri::command]
+async fn quick_pair_scan(duration_secs: u32) -> Result<Vec<QuickPairCandidate>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        bluez_quick_pair_scan(duration_secs).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = duration_secs;
+        Ok(Vec::new())
+    }
+}
+
 /// Tauri command: pair (and trust) a new AirPods by MAC address.
 /// Registers a transient just-works agent for the attempt; AirPods must be in
 /// pairing mode (case open, status light flashing white).
@@ -278,6 +302,124 @@ async fn bluez_list_paired_airpods() -> Result<Vec<PairedDevice>, String> {
             }
         }
     }
+    Ok(out)
+}
+
+/// Apple BLE company ID (used to identify AirPods broadcasts during LE scan).
+const APPLE_COMPANY_ID: u16 = 0x004C;
+
+fn continuity_model_name(model_le: u16) -> Option<&'static str> {
+    Some(match model_le {
+        0x0220 => "AirPods 1",
+        0x0F20 => "AirPods 2",
+        0x1320 => "AirPods Pro",
+        0x1420 => "AirPods Max",
+        0x1B20 => "AirPods Pro 2 (Lightning)",
+        0x2420 => "AirPods Pro 2 (USB-C)",
+        0x2024 => "AirPods 4 ANC",
+        0x2424 => "AirPods Pro 3",
+        0x2020 => "AirPods 3",
+        0x1F20 => "AirPods 4",
+        _ => return None,
+    })
+}
+
+fn parse_apple_proximity(payload: &[u8]) -> Option<(String, bool)> {
+    let mut i = 0;
+    while i + 1 < payload.len() {
+        let ty = payload[i];
+        let len = payload[i + 1] as usize;
+        let end = i + 2 + len;
+        if end > payload.len() {
+            return None;
+        }
+        if ty == 0x07 && len >= 5 {
+            let rec = &payload[i + 2..end];
+            let model_le = u16::from_le_bytes([rec[0], rec[1]]);
+            let status = rec[2];
+            let name = continuity_model_name(model_le)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("AirPods (model 0x{model_le:04X})"));
+            let in_pair_mode = (status & 0x0F) >= 4;
+            return Some((name, in_pair_mode));
+        }
+        i = end;
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+async fn bluez_quick_pair_scan(duration_secs: u32) -> Result<Vec<QuickPairCandidate>, String> {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let session = bluer::Session::new()
+        .await
+        .map_err(|e| format!("BlueZ session: {e}"))?;
+    let adapter = session
+        .default_adapter()
+        .await
+        .map_err(|e| format!("BlueZ adapter: {e}"))?;
+    adapter
+        .set_powered(true)
+        .await
+        .map_err(|e| format!("power on: {e}"))?;
+
+    let _discovery = adapter
+        .discover_devices()
+        .await
+        .map_err(|e| format!("discover: {e}"))?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(duration_secs as u64);
+    let mut candidates: HashMap<bluer::Address, QuickPairCandidate> = HashMap::new();
+
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let addrs = adapter.device_addresses().await.unwrap_or_default();
+        for addr in addrs {
+            if candidates.contains_key(&addr) {
+                continue;
+            }
+            let Ok(device) = adapter.device(addr) else {
+                continue;
+            };
+            if device.is_paired().await.unwrap_or(false) {
+                continue;
+            }
+            let Ok(Some(mfd)) = device.manufacturer_data().await else {
+                continue;
+            };
+            let Some(payload) = mfd.get(&APPLE_COMPANY_ID) else {
+                continue;
+            };
+            if let Some((model, in_pair_mode)) = parse_apple_proximity(payload) {
+                let name = device
+                    .name()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "AirPods".to_string());
+                let rssi = device.rssi().await.ok().flatten().unwrap_or(0);
+                candidates.insert(
+                    addr,
+                    QuickPairCandidate {
+                        address: addr.to_string(),
+                        name,
+                        model,
+                        rssi,
+                        in_pair_mode,
+                    },
+                );
+            }
+        }
+    }
+
+    let mut out: Vec<_> = candidates.into_values().collect();
+    out.sort_by(|a, b| {
+        b.in_pair_mode
+            .cmp(&a.in_pair_mode)
+            .then(b.rssi.cmp(&a.rssi))
+    });
     Ok(out)
 }
 
@@ -410,6 +552,7 @@ fn main() {
             connect,
             list_paired,
             pair,
+            quick_pair_scan,
         ])
         .setup(move |app| {
             // Build tray menu
