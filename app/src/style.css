@@ -775,3 +775,16 @@ body::-webkit-scrollbar-thumb:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
+
+.settings-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-faint);
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.settings-group-label:first-child {
+  margin-top: 0;
+}

@@ -30,6 +30,14 @@ pub struct AirPodsState {
     pub features: Vec<String>,
     pub auto_reconnect: bool,
     pub start_on_login: bool,
+    /// User pref: pause MPRIS media when a bud is removed.
+    pub ear_detection_pause: bool,
+    /// User pref: resume MPRIS media when both buds are inserted.
+    pub ear_detection_resume: bool,
+    /// User pref: preferred AirPods MAC. When set, the embedded daemon
+    /// prefers this device over any other paired AirPods during auto-discovery.
+    /// Empty string = no preference.
+    pub preferred_device: String,
 }
 
 impl Default for AirPodsState {
@@ -59,6 +67,60 @@ impl Default for AirPodsState {
             features: Vec::new(),
             auto_reconnect: true,
             start_on_login: false,
+            ear_detection_pause: true,
+            ear_detection_resume: true,
+            preferred_device: String::new(),
+        }
+    }
+}
+
+/// User-controlled subset of state that persists to disk.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct PersistedSettings {
+    #[serde(default)]
+    pub auto_reconnect: Option<bool>,
+    #[serde(default)]
+    pub start_on_login: Option<bool>,
+    #[serde(default)]
+    pub ear_detection_pause: Option<bool>,
+    #[serde(default)]
+    pub ear_detection_resume: Option<bool>,
+    #[serde(default)]
+    pub preferred_device: Option<String>,
+    #[serde(default)]
+    pub eq_preset: Option<String>,
+}
+
+impl PersistedSettings {
+    pub fn from_state(s: &AirPodsState) -> Self {
+        Self {
+            auto_reconnect: Some(s.auto_reconnect),
+            start_on_login: Some(s.start_on_login),
+            ear_detection_pause: Some(s.ear_detection_pause),
+            ear_detection_resume: Some(s.ear_detection_resume),
+            preferred_device: Some(s.preferred_device.clone()),
+            eq_preset: Some(s.eq_preset.clone()),
+        }
+    }
+
+    pub fn apply_to(self, s: &mut AirPodsState) {
+        if let Some(v) = self.auto_reconnect {
+            s.auto_reconnect = v;
+        }
+        if let Some(v) = self.start_on_login {
+            s.start_on_login = v;
+        }
+        if let Some(v) = self.ear_detection_pause {
+            s.ear_detection_pause = v;
+        }
+        if let Some(v) = self.ear_detection_resume {
+            s.ear_detection_resume = v;
+        }
+        if let Some(v) = self.preferred_device {
+            s.preferred_device = v;
+        }
+        if let Some(v) = self.eq_preset {
+            s.eq_preset = v;
         }
     }
 }

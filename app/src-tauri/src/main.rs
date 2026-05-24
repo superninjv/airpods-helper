@@ -14,7 +14,43 @@ use tauri::{
 };
 use tokio::sync::Mutex;
 
-use state::{AirPodsState, CommandSender, DaemonCommand, SharedState};
+use state::{AirPodsState, CommandSender, DaemonCommand, PersistedSettings, SharedState};
+
+/// Where persisted user settings live on disk.
+fn settings_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".config/airpods-helper/app-settings.json")
+}
+
+/// Load persisted settings and merge them into the live state.
+/// Missing or unparseable file is treated as "no overrides" — we never error.
+fn load_settings_into(state: &SharedState) {
+    let path = settings_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(settings) = serde_json::from_str::<PersistedSettings>(&text) else {
+        tracing::warn!("settings file at {path:?} is malformed, ignoring");
+        return;
+    };
+    state.update(|s| settings.apply_to(s));
+}
+
+/// Snapshot the current persisted-settings subset of state and write atomically.
+fn persist_settings(state: &SharedState) {
+    let snapshot = PersistedSettings::from_state(&state.current());
+    let path = settings_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(text) = serde_json::to_string_pretty(&snapshot) else {
+        return;
+    };
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
 
 /// Tauri command: get current AirPods status for the frontend
 #[tauri::command]
@@ -92,6 +128,7 @@ async fn set_eq_preset(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     state.update(|s| s.eq_preset = preset);
+    persist_settings(&state);
     Ok(())
 }
 
@@ -102,6 +139,7 @@ async fn set_auto_reconnect(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     state.update(|s| s.auto_reconnect = enabled);
+    persist_settings(&state);
     Ok(())
 }
 
@@ -112,6 +150,45 @@ async fn set_start_on_login(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     state.update(|s| s.start_on_login = enabled);
+    persist_settings(&state);
+    Ok(())
+}
+
+/// Tauri command: toggle "pause MPRIS media when a bud is removed"
+#[tauri::command]
+async fn set_ear_detection_pause(
+    enabled: bool,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    state.update(|s| s.ear_detection_pause = enabled);
+    persist_settings(&state);
+    Ok(())
+}
+
+/// Tauri command: toggle "resume MPRIS media when both buds are inserted"
+#[tauri::command]
+async fn set_ear_detection_resume(
+    enabled: bool,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    state.update(|s| s.ear_detection_resume = enabled);
+    persist_settings(&state);
+    Ok(())
+}
+
+/// Tauri command: set preferred AirPods MAC (empty string clears the pin).
+/// The embedded daemon prefers this device during auto-discovery.
+#[tauri::command]
+async fn set_preferred_device(
+    address: String,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let trimmed = address.trim();
+    if !trimmed.is_empty() && trimmed.parse::<bluer::Address>().is_err() {
+        return Err(format!("invalid MAC '{trimmed}'"));
+    }
+    state.update(|s| s.preferred_device = trimmed.to_string());
+    persist_settings(&state);
     Ok(())
 }
 
@@ -526,6 +603,10 @@ fn main() {
     let shared_state = state::create_shared_state();
     let cmd_sender: CommandSender = Arc::new(Mutex::new(None));
 
+    // Restore persisted user settings (auto-reconnect, ear detection prefs,
+    // preferred MAC, etc.). Best-effort — missing/malformed file is ignored.
+    load_settings_into(&shared_state);
+
     let daemon_state = shared_state.clone();
     let daemon_cmd_sender = cmd_sender.clone();
 
@@ -553,6 +634,9 @@ fn main() {
             list_paired,
             pair,
             quick_pair_scan,
+            set_ear_detection_pause,
+            set_ear_detection_resume,
+            set_preferred_device,
         ])
         .setup(move |app| {
             // Build tray menu

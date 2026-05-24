@@ -123,6 +123,14 @@ function updateUI(s) {
     document.getElementById("toggle-auto-reconnect").checked =
       s.auto_reconnect;
     document.getElementById("toggle-start-login").checked = s.start_on_login;
+    document.getElementById("toggle-ear-pause").checked =
+      s.ear_detection_pause;
+    document.getElementById("toggle-ear-resume").checked =
+      s.ear_detection_resume;
+    const preferredEl = document.getElementById("preferred-mac");
+    if (document.activeElement !== preferredEl) {
+      preferredEl.value = s.preferred_device || "";
+    }
   }
 
   // EQ preset
@@ -257,6 +265,40 @@ setupToggle("toggle-one-bud", "set_one_bud_anc", "enabled");
 setupToggle("toggle-volume-swipe", "set_volume_swipe", "enabled");
 setupToggle("toggle-auto-reconnect", "set_auto_reconnect", "enabled");
 setupToggle("toggle-start-login", "set_start_on_login", "enabled");
+setupToggle("toggle-ear-pause", "set_ear_detection_pause", "enabled");
+setupToggle("toggle-ear-resume", "set_ear_detection_resume", "enabled");
+
+// Preferred-device MAC pin
+const preferredInput = document.getElementById("preferred-mac");
+const preferredHint = document.getElementById("preferred-hint");
+const clearPreferredBtn = document.getElementById("btn-clear-preferred");
+
+async function savePreferredDevice(value) {
+  preferredHint.classList.remove("is-error");
+  try {
+    await invoke("set_preferred_device", { address: value });
+    preferredHint.textContent = value
+      ? `Pinned ${value}. The daemon will prefer this device.`
+      : "Cleared — daemon will auto-pick any paired AirPods.";
+  } catch (e) {
+    console.error("set_preferred_device error:", e);
+    preferredHint.classList.add("is-error");
+    preferredHint.textContent = String(e);
+  }
+}
+
+preferredInput.addEventListener("change", () => {
+  userInteracting = true;
+  savePreferredDevice(preferredInput.value.trim().toUpperCase());
+  setTimeout(() => (userInteracting = false), 500);
+});
+preferredInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") preferredInput.blur();
+});
+clearPreferredBtn.addEventListener("click", async () => {
+  preferredInput.value = "";
+  await savePreferredDevice("");
+});
 
 // Mic mode buttons
 document.querySelectorAll(".mic-btn").forEach((btn) => {

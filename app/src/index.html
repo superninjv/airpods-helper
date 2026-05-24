@@ -180,6 +180,8 @@
     <!-- Settings -->
     <section class="card">
       <h2 class="card-title">Settings</h2>
+
+      <div class="settings-group-label">App behavior</div>
       <div class="toggle-row">
         <span class="toggle-label">Auto-Reconnect</span>
         <label class="toggle">
@@ -193,6 +195,38 @@
           <input type="checkbox" id="toggle-start-login">
           <span class="toggle-slider"></span>
         </label>
+      </div>
+
+      <div class="settings-group-label">Ear detection</div>
+      <div class="toggle-row">
+        <span class="toggle-label">Pause media when a bud is removed</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-ear-pause" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Resume when both buds inserted</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-ear-resume" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="settings-group-label">Preferred device</div>
+      <div class="pair-form-row">
+        <input
+          type="text"
+          id="preferred-mac"
+          class="pair-input"
+          placeholder="(none) — pin a MAC to prefer one device"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <button id="btn-clear-preferred" class="btn-secondary">Clear</button>
+      </div>
+      <div class="pair-form-hint" id="preferred-hint">
+        When set, the daemon connects to this MAC over any other paired AirPods.
       </div>
     </section>
   </div>
