@@ -173,6 +173,12 @@ fn parse_battery(payload: &[u8]) -> Result<AapEvent, ParseError> {
         };
 
         match BatteryComponent::from_byte(component_byte) {
+            Some(BatteryComponent::Headphones) => {
+                // AirPods Max reports one battery. Mirror it into the existing
+                // left/right fields so current clients can display its level.
+                update.left = Some(entry);
+                update.right = Some(entry);
+            }
             Some(BatteryComponent::Left) => update.left = Some(entry),
             Some(BatteryComponent::Right) => update.right = Some(entry),
             Some(BatteryComponent::Case) => update.case = Some(entry),

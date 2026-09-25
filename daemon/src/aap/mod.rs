@@ -193,6 +193,7 @@ impl AncMode {
 /// Battery component identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatteryComponent {
+    Headphones = 0x01,
     Right = 0x02,
     Left = 0x04,
     Case = 0x08,
@@ -201,6 +202,7 @@ pub enum BatteryComponent {
 impl BatteryComponent {
     pub fn from_byte(b: u8) -> Option<Self> {
         match b {
+            0x01 => Some(Self::Headphones),
             0x02 => Some(Self::Right),
             0x04 => Some(Self::Left),
             0x08 => Some(Self::Case),
