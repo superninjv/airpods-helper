@@ -1,6 +1,6 @@
 {
   "name": "airpods-helper-app",
-  "version": "0.3.0-rc.1",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "tauri": "tauri"
