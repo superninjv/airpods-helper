@@ -19,11 +19,12 @@ install: build
 	install -Dm755 $(CLI_BIN) $(PREFIX)/bin/airpods-cli
 	install -Dm644 daemon/airpods-daemon.service $(HOME)/.config/systemd/user/airpods-daemon.service
 	install -Dm644 daemon/org.costa.AirPods.service $(DBUS_SERVICES_DIR)/org.costa.AirPods.service
-	install -dm755 $(CONFIG_DIR)/eq/
-	cp -n eq-presets/*.toml $(CONFIG_DIR)/eq/ 2>/dev/null || true
+	install -dm755 $(CONFIG_DIR)
 	cp -n config.example.toml $(CONFIG_DIR)/config.toml 2>/dev/null || true
-	ln -sfn $(CURDIR)/widget $(AGS_WIDGET_DIR)
+	@# AGS widgets only if AGS is set up
+	@if [ -d $(HOME)/.config/ags ]; then ln -sfn $(CURDIR)/widget $(AGS_WIDGET_DIR); echo "linked AGS widget"; fi
 	systemctl --user daemon-reload
+	systemctl --user try-restart airpods-daemon.service 2>/dev/null || true
 	@echo ""
 	@echo "Installed into $(PREFIX). Next:"
 	@echo "  sudo setcap 'cap_net_raw,cap_net_admin+eip' $(PREFIX)/bin/airpods-daemon"
@@ -41,12 +42,10 @@ install-system: build
 	sudo install -Dm644 daemon/org.costa.AirPods.service /usr/share/dbus-1/services/org.costa.AirPods.service
 	sudo sed -i 's|%h/.local/bin/airpods-daemon|$(SYSTEM_PREFIX)/bin/airpods-daemon|' \
 		/usr/share/dbus-1/services/org.costa.AirPods.service
-	sudo install -dm755 /usr/share/airpods-helper/eq-presets
-	sudo install -m644 eq-presets/*.toml /usr/share/airpods-helper/eq-presets/
-	install -dm755 $(CONFIG_DIR)/eq/
-	cp -n eq-presets/*.toml $(CONFIG_DIR)/eq/ 2>/dev/null || true
+	install -dm755 $(CONFIG_DIR)
 	cp -n config.example.toml $(CONFIG_DIR)/config.toml 2>/dev/null || true
 	systemctl --user daemon-reload
+	systemctl --user try-restart airpods-daemon.service 2>/dev/null || true
 	@echo ""
 	@echo "Installed system-wide into $(SYSTEM_PREFIX). Caps are already set."
 	@echo "  systemctl --user enable --now airpods-daemon.service"
@@ -63,7 +62,7 @@ uninstall:
 	rm -f $(PREFIX)/bin/airpods-cli
 	rm -f $(HOME)/.config/systemd/user/airpods-daemon.service
 	rm -f $(DBUS_SERVICES_DIR)/org.costa.AirPods.service
-	rm -f $(AGS_WIDGET_DIR)
+	[ -L $(AGS_WIDGET_DIR) ] && rm -f $(AGS_WIDGET_DIR) || true
 	systemctl --user daemon-reload
 
 uninstall-system:
