@@ -1,107 +1,43 @@
 # airpods-helper
 
-Native Apple AirPods support for Linux. Rust daemon + AGS/GTK4 widgets.
+AirPods support for Linux. A Rust daemon owns the AirPods session and exposes it on D-Bus; the CLI, Tauri app and AGS widgets are thin D-Bus clients. Keep the daemon lightweight: single-threaded tokio, no polling where an event exists, minimal dependencies.
 
-## Architecture
+## Layout
 
-```
-┌─────────────────────────┐    D-Bus (org.costa.AirPods)    ┌──────────────────┐
-│   daemon/ (Rust)        │ ◄──────────────────────────────► │  widget/ (TS)    │
-│                         │   Properties + Signals + Methods │                  │
-│  BlueZ ← BT adapter    │                                  │  AirPodsBattery  │
-│  L2CAP ← AAP protocol  │                                  │  AirPodsPopup    │
-│  State ← watch channels │                                  │  AirPodsService  │
-│  EQ    ← PipeWire       │                                  └──────────────────┘
-│  MPRIS ← ear detection  │
-└─────────────────────────┘
-```
+- **`aap/`** — protocol crate (no I/O): `parser.rs` (packets → `AapEvent`), `commands.rs` (packet builders), `models.rs` (model number → name/features), `buds.rs` (`BudTracker`: maps primary/secondary ear reports to left/right — the primary is the first bud in battery packets and swaps). Shared by `daemon/` and `windows/`.
+- **`daemon/src/`**
+  - `main.rs` — event loop and session lifecycle: BlueZ events, AAP session start/end (tagged with a session id), reconnect policy, EQ selection, SIGTERM/SIGINT shutdown.
+  - `bluez.rs` — watches device `Connected` properties (never runs discovery except for explicit pair/scan — continuous discovery makes A2DP stutter), pair, quick-pair scan (Continuity proximity records).
+  - `l2cap.rs` — AAP handshake + read/write loop; applies events to state.
+  - `state.rs` — `SharedState` (tokio watch). `reset()` keeps EQ fields.
+  - `dbus.rs` — `org.costa.AirPods`. **All `PropertiesChanged` come from `run_property_notifier`, which diffs state snapshots** — never emit property changes by hand. Settings are writable properties persisted via `config::update_config`.
+  - `config.rs` — `SharedConfig` (RwLock); `save()` uses toml_edit so user comments survive.
+  - `mpris.rs` — pause on bud removal, resume only what we paused.
+  - `eq/` — `preset.rs` (load/validate/save; built-ins are `include_str!`'d from `eq-presets/`), `dsp.rs` (RBJ biquads), `pipewire.rs` (filter-chain in a supervised `pipewire -c` child; smart filter on WirePlumber ≥ 0.5, else pinned target + default-sink redirect), `pulse.rs` (null sink → parec → biquads → pacat), `mod.rs` (`EqManager`: backend detection, status, restore on stop).
+- **`cli/`** — `airpods-cli`; reads state with one `GetAll`.
+- **`app/`** — Tauri app, D-Bus client of the daemon.
+- **`widget/`** — AGS/GTK4 widgets. Costa OS carries copies in `costa-os/shell/widget/airpods/`; keep them in sync.
+- **`windows/`** — experimental; excluded from the workspace. Check with `cargo clippy --target x86_64-pc-windows-gnu` from `windows/`.
 
-### Daemon (`daemon/`)
-Rust binary that speaks Apple Accessory Protocol (AAP) over L2CAP to AirPods, exposing state via D-Bus.
+The D-Bus contract is `docs/dbus-api.md`; update it with any interface change.
 
-- **`main.rs`** — tokio event loop: BlueZ events, AAP events, D-Bus commands, EQ commands, reconnect
-- **`aap/mod.rs`** — AAP constants, enums (AncMode, BatteryComponent, EarStatus), PSM 0x1001
-- **`aap/parser.rs`** — parses raw AAP packets into typed events
-- **`aap/commands.rs`** — builds AAP command packets (handshake, ANC, CA, etc.)
-- **`bluez.rs`** — BlueZ adapter monitor, device detection (UUID + name fallback), connect helper
-- **`l2cap.rs`** — L2CAP connection, handshake, read/write loop, applies events to state
-- **`dbus.rs`** — zbus service: properties, methods (SetAncMode, SetEqPreset, etc.), signals
-- **`state.rs`** — `SharedState` via `tokio::sync::watch`, used by all subsystems
-- **`eq.rs`** — PipeWire parametric EQ via filter-chain config drop-in (`99-airpods-eq.conf`)
-- **`mpris.rs`** — pause/resume media players on ear removal/insertion
-- **`config.rs`** — TOML config from `~/.config/airpods-helper/config.toml`
-
-### Widgets (`widget/`)
-AGS (Astal GTK Shell) GTK4 widgets consumed by the Costa OS bar. Pure D-Bus clients.
-
-- **`AirPodsBattery.tsx`** — bar button + popover (battery, ANC, CA, EQ, ear status). Self-contained D-Bus proxy, no external deps besides AGS/GTK4/GLib
-- **`AirPodsPopup.tsx`** — layer-shell popup on device connect/disconnect (uses `gnim` state from AirPodsService)
-- **`AirPodsService.ts`** — standalone D-Bus proxy with `gnim` reactive state (used by AirPodsPopup)
-- **`index.ts`** — barrel exports
-
-**Note:** `AirPodsBattery.tsx` has its own inline D-Bus proxy (no `gnim` dep). `AirPodsPopup.tsx` uses `AirPodsService.ts` which depends on `gnim`. These are two separate D-Bus client patterns that coexist.
-
-### EQ Presets (`eq-presets/`)
-TOML files defining parametric EQ bands. Installed to `~/.config/airpods-helper/eq/`.
-
-## Build & Install
+## Build & test
 
 ```bash
-# Build daemon (requires Rust toolchain)
-make daemon
-# or: cd daemon && cargo build --release
-
-# Install everything (daemon binary, systemd service, EQ presets, widget symlink)
-make install
-
-# Post-install: grant raw socket capability and enable service
-sudo setcap 'cap_net_raw,cap_net_admin+eip' ~/.local/bin/airpods-daemon
-systemctl --user enable --now airpods-daemon.service
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p airpods-daemon -- --ignored --test-threads=1   # live PipeWire/Pulse routing tests (no audio played)
 ```
 
-## Config
+Running the daemon locally: `XDG_CONFIG_HOME=/tmp/x ./target/debug/airpods-daemon` (keeps your real config untouched). It needs `cap_net_raw,cap_net_admin` for L2CAP.
 
-`~/.config/airpods-helper/config.toml`:
-- `[device]` — optional MAC address pin, name
-- `[eq]` — active preset name, auto-load on connect
-- `[ear_detection]` — pause/resume media on removal
-- `[reconnect]` — auto-reconnect with backoff, max retries
-
-## D-Bus Interface (`org.costa.AirPods`)
-
-**Properties:** Connected, BatteryLeft/Right/Case, ChargingLeft/Right/Case, AncMode, EarLeft/Right, ConversationalAwareness, AdaptiveNoiseLevel, OneBudAnc, Model, ModelName, Firmware, Features, EqPreset
-
-**Features property:** `as` (array of strings) — model-dependent capability list. Possible values: `anc`, `adaptive`, `ca`, `one_bud_anc`. Widgets/CLI use this to conditionally show controls. Set from `models::model_features()` when DeviceInfo is received. Unknown models get all features (safe default).
-
-**Methods:** SetAncMode(s), SetConversationalAwareness(b), SetAdaptiveNoiseLevel(y), SetOneBudAnc(b), SetMicMode(s), SetEqPreset(s), DisableEq(), ListEqPresets(), Reconnect()
-
-**SetMicMode** takes "auto", "right", or "left" — selects which bud's microphone is primary. Maps to AAP control sub-command 0x01.
+Never play audio in tests; verify routing structurally (`pw-link -l`, `pactl list short …`).
 
 ## Protocol notes
 
-The L2CAP PSM 0x1001 AAP channel is BR/EDR-only. Concurrent A2DP-quality output + microphone input from AirPods is **not achievable on Linux today**: AirPods Pro 2 H2 chip is capable of bidirectional LC3 over LE Audio, but Apple gates standard BAP/PACS advertising behind Magic Pairing crypto (AAP opcodes 0x30/0x31 — IRK/EncKey exchange) that requires Apple's H2 keys. The classic BT A2DP/HFP profile mutex applies and macOS itself doesn't escape this — when a Mac call activates the mic, it drops A2DP to SCO/mSBC just like Linux. Cracking Magic Pairing is multi-month firmware RE; out of scope for now. See `daemon/src/aap/mod.rs` for the full documented sub-command table sourced from LibrePods.
-
-**Signals:** DeviceConnected(s), DeviceDisconnected(), EarDetectionChanged(bb)
-
-## Dependencies
-
-### Daemon (Rust)
-- `bluer` — BlueZ D-Bus bindings (L2CAP, device discovery)
-- `zbus` — D-Bus service (async, tokio)
-- `tokio` — async runtime
-- `serde` + `toml` — config parsing
-- `tracing` — structured logging
-
-### Widget (TypeScript)
-- AGS (Astal GTK Shell) — GTK4 widget framework
-- `gnim` — reactive state (used by AirPodsPopup/Service, NOT by AirPodsBattery)
-- GLib/Gio introspection — D-Bus proxy
-
-### System
-- BlueZ (bluetoothd)
-- PipeWire + WirePlumber (for EQ filter chains)
-- `cap_net_raw,cap_net_admin` on the daemon binary (L2CAP raw sockets)
-
-## Costa OS Integration
-
-The widget files are symlinked into `~/.config/ags/widget/airpods/` by `make install`. Costa OS also carries copies in `costa-os/shell/widget/airpods/` — keep both in sync when making widget changes.
+- L2CAP PSM 0x1001 (BR/EDR). Handshake → `SET_FEATURES` (host caps `0xFF`, needed for Adaptive/CA during playback) → subscribe → `ENABLE_ALL_LISTENING_MODES` (re-sent before switching to Off, which iCloud-synced settings can disable).
+- Battery entries flagged disconnected carry stale levels → exposed as `-1`. AirPods Max report one `0x01` (headphones) component, mirrored into left/right.
+- Device-info strings are positional (empty fields included).
+- Stereo + mic: AirPods can stream the mic as AAC-ELD over AAP opcode `0x58` while A2DP keeps playing (LibrePods PR #655). Not implemented here yet — it's the next big feature. Opcodes `0x30`/`0x31` are BLE advertisement key requests, not an LE Audio gate.
+- Sub-command table and sources: `aap/src/lib.rs`, LibrePods docs.
