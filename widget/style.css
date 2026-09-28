@@ -112,6 +112,11 @@
   background: #f38ba8;
 }
 
+/* Battery level unknown (-1): shown as "—" */
+.ap-bat-unknown .ap-bat-pct {
+  color: #585b70;
+}
+
 .ap-bat-pct {
   font-size: 12px;
   color: #bac2de;
@@ -222,6 +227,72 @@
   color: #a6e3a1;
 }
 
+/* EQ status (EqStatus: off | active | waiting | error | unsupported) */
+
+.ap-eq-status {
+  font-size: 10px;
+  font-weight: 600;
+  color: #7f849c;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.ap-eq-status.ap-eq-active {
+  color: #a6e3a1;
+  background: rgba(166, 227, 161, 0.12);
+}
+
+.ap-eq-status.ap-eq-waiting {
+  color: #f9e2af;
+  background: rgba(249, 226, 175, 0.12);
+}
+
+.ap-eq-status.ap-eq-error {
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.12);
+}
+
+.ap-eq-msg {
+  font-size: 11px;
+  color: #a6adc8;
+}
+
+.ap-eq-msg.ap-eq-waiting {
+  color: #f9e2af;
+}
+
+.ap-eq-msg.ap-eq-error,
+.ap-eq-msg.ap-eq-unsupported {
+  color: #f38ba8;
+}
+
+/* ─── Mic mode (buttons reuse .ap-eq-btn) ──────────── */
+
+.ap-mic-btn {
+  min-width: 40px;
+}
+
+.ap-mic-btn.active {
+  background: rgba(137, 180, 250, 0.15);
+  border-color: rgba(137, 180, 250, 0.3);
+  color: #89b4fa;
+}
+
+/* ─── Open app button ─────────────────────────────── */
+
+.ap-open-app {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #bac2de;
+}
+
+.ap-open-app:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* ─── Ear status ──────────────────────────────────── */
 
 .ap-ear-row {
@@ -317,6 +388,10 @@
 
 .airpods-bat-red .airpods-bat-bar block.filled {
   background: #f38ba8;
+}
+
+.airpods-bat-unknown .airpods-bat-pct {
+  color: #585b70;
 }
 
 .airpods-bat-pct {
