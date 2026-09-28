@@ -1,6 +1,6 @@
 # Maintainer: Jack Hernandez <jack@synoros.io>
 pkgname=airpods-helper
-pkgver=0.2.2
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Native AirPods support for Linux — ANC, battery, EQ, ear detection, CLI"
 arch=('x86_64')
@@ -8,8 +8,9 @@ url="https://github.com/superninjv/airpods-helper"
 license=('MIT')
 depends=('bluez' 'dbus' 'libcap')
 makedepends=('rust' 'cargo')
-optdepends=('pipewire: parametric EQ filter chains (EQ is the only PipeWire-only feature)'
-            'wireplumber: required alongside pipewire for the EQ filter chain'
+optdepends=('pipewire: parametric EQ (preferred backend)'
+            'wireplumber: EQ routing with pipewire (>= 0.5 for transparent smart-filter mode)'
+            'libpulse: pactl/pacat/parec for EQ on PulseAudio-only systems'
             'ags: GTK4 desktop widgets for bar integration')
 install="$pkgname.install"
 source=("$pkgname-$pkgver.tar.gz::https://github.com/superninjv/$pkgname/archive/v$pkgver.tar.gz"
@@ -44,10 +45,6 @@ package() {
     install -Dm644 daemon/org.costa.AirPods.service "$pkgdir/usr/share/dbus-1/services/org.costa.AirPods.service"
     sed -i 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \
         "$pkgdir/usr/share/dbus-1/services/org.costa.AirPods.service"
-
-    # EQ presets
-    install -dm755 "$pkgdir/usr/share/airpods-helper/eq-presets"
-    install -m644 eq-presets/*.toml "$pkgdir/usr/share/airpods-helper/eq-presets/"
 
     # Config example
     install -Dm644 config.example.toml "$pkgdir/usr/share/airpods-helper/config.example.toml"

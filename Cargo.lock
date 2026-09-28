@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "airpods-cli"
-version = "0.3.0-rc.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "airpods-daemon"
-version = "0.3.0-rc.1"
+version = "0.3.0"
 dependencies = [
  "aap",
  "anyhow",
