@@ -39,8 +39,13 @@ struct Daemon {
     config: SharedConfig,
     cmd_tx: SharedCmdTx,
     session_tx: mpsc::Sender<SessionMsg>,
-    /// Loops back into the BlueZ event queue, for delayed session retries.
-    retry_tx: mpsc::Sender<BlueZEvent>,
+    /// Delayed AAP session retries come back through here.
+    retry_tx: mpsc::Sender<Address>,
+    /// The AirPods whose Bluetooth link is up and that we manage. Separate
+    /// from `session`: the AAP control channel can drop and be retried while
+    /// the audio link stays up, and the link-down event can arrive after the
+    /// session has already ended.
+    bt_device: Option<Address>,
     /// AAP session restarts since the last successful handshake.
     aap_retries: u32,
     eq: EqManager,
@@ -87,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
     let (control_tx, mut control_rx) = mpsc::channel::<Control>(16);
     let (bluez_tx, mut bluez_rx) = mpsc::channel::<BlueZEvent>(16);
     let (session_tx, mut session_rx) = mpsc::channel::<SessionMsg>(64);
+    let (retry_tx, mut retry_rx) = mpsc::channel::<Address>(4);
 
     let connection = dbus::serve(state.clone(), config.clone(), cmd_tx.clone(), control_tx).await?;
     tokio::spawn(dbus::run_property_notifier(
@@ -105,7 +111,8 @@ async fn main() -> anyhow::Result<()> {
         config,
         cmd_tx,
         session_tx,
-        retry_tx: bluez_tx.clone(),
+        retry_tx,
+        bt_device: None,
         aap_retries: 0,
         session: None,
         next_session_id: 0,
@@ -141,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
                 SessionMsg::Ended(id) if daemon.is_current(id) => daemon.on_session_ended().await,
                 _ => {}
             },
+            Some(addr) = retry_rx.recv() => daemon.on_retry(addr).await,
             Some(ctl) = control_rx.recv() => daemon.on_control(ctl).await,
             _ = sigterm.recv() => break,
             _ = sigint.recv() => break,
@@ -189,23 +197,30 @@ impl Daemon {
             info!("ignoring AirPods {addr}: preferred device is {pinned}");
             return;
         }
-        if let Some(s) = &self.session {
-            if s.address == addr {
-                return; // duplicate notification (e.g. monitor restart)
+        match self.bt_device {
+            Some(current) if current == addr => return, // duplicate (e.g. monitor restart)
+            Some(current) => {
+                info!("ignoring AirPods {addr}: already using {current}");
+                return;
             }
-            info!(
-                "ignoring AirPods {addr}: already connected to {}",
-                s.address
-            );
-            return;
+            None => {}
         }
+        info!("AirPods {addr} connected");
+        self.bt_device = Some(addr);
+        self.last_address = Some(addr);
+        // Connecting again (case opened, bluetoothctl, …) lifts a manual disconnect.
+        self.user_disconnected = false;
+        self.aap_retries = 0;
         if let Some(r) = self.reconnect.take() {
             r.abort();
         }
-        // Connecting again (case opened, bluetoothctl, …) lifts a manual disconnect.
-        self.user_disconnected = false;
-        self.last_address = Some(addr);
-        self.start_session(addr).await;
+        // EQ follows the audio link, not the control session.
+        if config::read(&self.config, |c| c.eq.auto_load) {
+            self.eq.set_device(Some(addr)).await;
+        }
+        if self.session.is_none() {
+            self.start_session(addr).await;
+        }
     }
 
     async fn start_session(&mut self, addr: Address) {
@@ -241,36 +256,35 @@ impl Daemon {
         });
     }
 
-    /// Tear down the current session and publish the disconnected state.
+    /// Tear down the AAP session and publish the disconnected state.
     async fn end_session(&mut self) {
         if let Some(s) = self.session.take() {
             s.handle.abort();
         }
         *self.cmd_tx.lock().await = None;
         self.state.reset();
-        self.eq.set_device(None).await;
     }
 
     async fn on_bt_disconnected(&mut self, addr: Address) {
-        if self.session.as_ref().is_none_or(|s| s.address != addr) {
+        if self.bt_device != Some(addr) {
             return;
         }
         info!("AirPods {addr} disconnected");
+        self.bt_device = None;
         self.end_session().await;
-        self.aap_retries = 0;
+        self.eq.set_device(None).await;
         self.maybe_reconnect(addr);
     }
 
-    /// The AAP channel closed but Bluetooth may still be up (e.g. the AirPods
-    /// rebooted the channel after a firmware hiccup). Retry the session if so.
+    /// The AAP channel closed. If the Bluetooth link is still up (the AirPods
+    /// restarted the channel after a firmware hiccup), retry it a few times.
+    /// If the link went down, `on_bt_disconnected` handles reconnecting.
     async fn on_session_ended(&mut self) {
         let Some(addr) = self.session.as_ref().map(|s| s.address) else {
             return;
         };
         self.end_session().await;
-        let still_connected =
-            matches!(bluez::currently_connected_airpods().await, Ok(Some(a)) if a == addr);
-        if !still_connected || self.user_disconnected {
+        if self.bt_device != Some(addr) || self.user_disconnected {
             return;
         }
         if self.aap_retries >= 3 {
@@ -278,12 +292,18 @@ impl Daemon {
             return;
         }
         self.aap_retries += 1;
-        info!("Bluetooth still connected; restarting AAP session in 3s");
+        info!("AAP session ended with Bluetooth still up; retrying in 3s");
         let tx = self.retry_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(3)).await;
-            let _ = tx.send(BlueZEvent::AirPodsConnected(addr)).await;
+            let _ = tx.send(addr).await;
         });
+    }
+
+    async fn on_retry(&mut self, addr: Address) {
+        if self.bt_device == Some(addr) && self.session.is_none() && !self.user_disconnected {
+            self.start_session(addr).await;
+        }
     }
 
     fn maybe_reconnect(&mut self, addr: Address) {
@@ -301,21 +321,15 @@ impl Daemon {
 
     async fn on_aap_event(&mut self, event: AapEvent) {
         if let AapEvent::DeviceInfo(_) = event {
-            self.aap_retries = 0;
-            // Model is known now; start EQ for this device if configured.
-            let auto_load = config::read(&self.config, |c| c.eq.auto_load);
-            let addr = self.session.as_ref().map(|s| s.address);
-            if auto_load {
-                self.eq.set_device(addr).await;
-            }
+            self.aap_retries = 0; // handshake fully worked
         }
     }
 
     async fn on_control(&mut self, ctl: Control) {
         match ctl {
-            Control::Reconnect => {
+            Control::Reconnect(reply) => {
                 let Some(addr) = self.last_address else {
-                    warn!("reconnect requested but no known device address");
+                    let _ = reply.send(Err("no AirPods have connected since the daemon started; use ConnectTo".into()));
                     return;
                 };
                 self.user_disconnected = false;
@@ -324,12 +338,22 @@ impl Daemon {
                 }
                 let retries = config::read(&self.config, |c| c.reconnect.max_retries).max(1);
                 self.reconnect = Some(tokio::spawn(reconnect_with_backoff(addr, retries)));
+                let _ = reply.send(Ok(()));
             }
-            Control::UserDisconnected => {
+            Control::Disconnect(reply) => {
+                let Some(addr) = self.bt_device else {
+                    let _ = reply.send(Err("no AirPods connected".into()));
+                    return;
+                };
                 self.user_disconnected = true;
                 if let Some(r) = self.reconnect.take() {
                     r.abort();
                 }
+                let result = bluez::disconnect_device(addr).await.map_err(|e| {
+                    self.user_disconnected = false;
+                    format!("Bluetooth disconnect failed: {e}")
+                });
+                let _ = reply.send(result);
             }
             Control::EqSelect(id, done) => {
                 self.select_eq(id).await;
@@ -362,13 +386,8 @@ impl Daemon {
         }
         self.state.update(|s| s.eq_preset = id);
         // Selecting a preset while connected applies it even if auto-load is off.
-        let device = self
-            .session
-            .as_ref()
-            .filter(|_| self.state.current().connected)
-            .map(|s| s.address);
         self.eq.select(preset).await;
-        self.eq.set_device(device).await;
+        self.eq.set_device(self.bt_device).await;
     }
 }
 

@@ -29,6 +29,7 @@ dependencies = [
  "anyhow",
  "bluer",
  "futures",
+ "libc",
  "serde",
  "serde_json",
  "thiserror",

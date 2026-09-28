@@ -13,6 +13,7 @@ mod pulse;
 use bluer::Address;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -65,18 +66,37 @@ impl Status {
 }
 
 /// Run a helper binary and return stdout, or an error including stderr.
+/// Bounded by a timeout, and the child is killed if the caller is cancelled,
+/// so a wedged audio server can't stall the daemon.
 pub(crate) async fn run_cmd(bin: &str, args: &[&str]) -> anyhow::Result<String> {
-    let out = Command::new(bin)
+    let child = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
-        .output()
-        .await
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|e| anyhow::anyhow!("{bin}: {e}"))?;
+    let out = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .map_err(|_| anyhow::anyhow!("{bin} {}: timed out", args.join(" ")))??;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!("{bin} {}: {}", args.join(" "), stderr.trim());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Make a helper process exit if the daemon dies without cleaning up
+/// (crash, SIGKILL), instead of lingering and holding audio routing.
+pub(crate) fn die_with_parent(cmd: &mut Command) -> &mut Command {
+    // SAFETY: prctl is async-signal-safe; nothing else runs in the hook.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        })
+    }
 }
 
 /// Handle backends use to publish their status.
@@ -94,6 +114,13 @@ impl StatusSink {
             changed
         });
     }
+    fn backend(&self, backend: Backend) {
+        self.state.update_if_changed(|s| {
+            let changed = s.eq_backend != backend.as_str();
+            s.eq_backend = backend.as_str().to_string();
+            changed
+        });
+    }
     pub fn active(&self) {
         self.set(Status::Active, String::new());
     }
@@ -105,13 +132,68 @@ impl StatusSink {
     }
 }
 
-enum Restore {
-    PipeWire(Arc<Mutex<pipewire::Restore>>),
-    Pulse(Arc<Mutex<pulse::Restore>>),
+/// Routing changes a running backend has made, undone when EQ stops.
+/// Both slots exist so the supervisor can record into whichever backend it
+/// ends up using, and stopping can always undo everything.
+#[derive(Clone, Default)]
+struct Restore {
+    pipewire: Arc<Mutex<pipewire::Restore>>,
+    pulse: Arc<Mutex<pulse::Restore>>,
+}
+
+impl Restore {
+    async fn run(&self) {
+        std::mem::take(&mut *self.pipewire.lock().await).run().await;
+        std::mem::take(&mut *self.pulse.lock().await).run().await;
+    }
+}
+
+async fn detect(choice: EqBackendChoice) -> Backend {
+    let pw = || async {
+        match pipewire::detect().await {
+            Some(true) => Backend::PipeWire,
+            Some(false) => Backend::PipeWireLegacy,
+            None => Backend::None,
+        }
+    };
+    let pa = || async {
+        if pulse::detect().await { Backend::PulseAudio } else { Backend::None }
+    };
+    match choice {
+        EqBackendChoice::Pipewire => pw().await,
+        EqBackendChoice::Pulseaudio => pa().await,
+        EqBackendChoice::Auto => match pw().await {
+            Backend::None => pa().await,
+            found => found,
+        },
+    }
+}
+
+/// The EQ task: find a backend (the audio server may start after us, or
+/// restart), then hand over to that backend's supervisor.
+async fn run(preset: EqPreset, address: Address, choice: EqBackendChoice, status: StatusSink, restore: Restore) {
+    let backend = loop {
+        match detect(choice).await {
+            Backend::None => {
+                status.backend(Backend::None);
+                status.set(Status::Unsupported, unsupported_reason(choice));
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+            found => break found,
+        }
+    };
+    status.backend(backend);
+    info!("starting EQ '{}' for {address} via {}", preset.id, backend.as_str());
+    match backend {
+        Backend::PipeWire | Backend::PipeWireLegacy => {
+            pipewire::supervise(preset, address, backend == Backend::PipeWire, status, restore.pipewire).await
+        }
+        Backend::PulseAudio => pulse::supervise(preset, address, status, restore.pulse).await,
+        Backend::None => unreachable!(),
+    }
 }
 
 pub struct EqManager {
-    state: SharedState,
     status: StatusSink,
     choice: EqBackendChoice,
     preset: Option<EqPreset>,
@@ -121,60 +203,31 @@ pub struct EqManager {
 
 impl EqManager {
     pub async fn new(state: SharedState, choice: EqBackendChoice) -> Self {
+        // Undo anything a previous run left behind (crash, SIGKILL, upgrade).
         pipewire::remove_legacy_dropin().await;
+        pipewire::cleanup_stale().await;
         if pulse::detect().await {
             pulse::cleanup_stale().await;
         }
         let mgr = Self {
-            status: StatusSink {
-                state: state.clone(),
-            },
-            state,
+            status: StatusSink { state },
             choice,
             preset: None,
             device: None,
             task: None,
         };
-        let backend = mgr.detect().await;
-        mgr.state
-            .update(|s| s.eq_backend = backend.as_str().to_string());
-        mgr.publish_idle(backend);
+        mgr.status.backend(detect(choice).await);
+        mgr.publish_idle();
         mgr
     }
 
-    async fn detect(&self) -> Backend {
-        let pw = || async {
-            match pipewire::detect().await {
-                Some(true) => Backend::PipeWire,
-                Some(false) => Backend::PipeWireLegacy,
-                None => Backend::None,
-            }
-        };
-        let pa = || async {
-            if pulse::detect().await {
-                Backend::PulseAudio
-            } else {
-                Backend::None
-            }
-        };
-        match self.choice {
-            EqBackendChoice::Pipewire => pw().await,
-            EqBackendChoice::Pulseaudio => pa().await,
-            EqBackendChoice::Auto => match pw().await {
-                Backend::None => pa().await,
-                found => found,
-            },
-        }
-    }
-
     /// Status to show when nothing is running.
-    fn publish_idle(&self, backend: Backend) {
-        let (status, error) = match (&self.preset, backend) {
-            (None, _) => (Status::Off, String::new()),
-            (Some(_), Backend::None) => (Status::Unsupported, unsupported_reason(self.choice)),
-            (Some(_), _) => (Status::Waiting, String::new()),
-        };
-        self.status.set(status, error);
+    fn publish_idle(&self) {
+        if self.preset.is_some() {
+            self.status.waiting();
+        } else {
+            self.status.set(Status::Off, String::new());
+        }
     }
 
     /// Select a preset (or `None` to turn EQ off) and apply it if the AirPods
@@ -184,9 +237,9 @@ impl EqManager {
         self.restart().await;
     }
 
-    /// The AirPods connected (`Some`) or went away (`None`).
+    /// The AirPods' audio connection came up (`Some`) or went away (`None`).
     pub async fn set_device(&mut self, device: Option<Address>) {
-        if self.device == device && self.task.is_some() {
+        if self.device == device {
             return;
         }
         self.device = device;
@@ -199,32 +252,15 @@ impl EqManager {
 
     async fn restart(&mut self) {
         self.stop_task().await;
-        let backend = self.detect().await;
-        self.state.update_if_changed(|s| {
-            let changed = s.eq_backend != backend.as_str();
-            s.eq_backend = backend.as_str().to_string();
-            changed
-        });
-
         let (Some(preset), Some(address)) = (self.preset.clone(), self.device) else {
-            self.publish_idle(backend);
+            self.publish_idle();
             return;
         };
-        if backend == Backend::None {
-            self.publish_idle(backend);
-            return;
-        }
         if preset.is_flat() {
             info!("EQ preset '{}' is flat; no filter needed", preset.id);
             self.status.active();
             return;
         }
-
-        info!(
-            "starting EQ '{}' for {address} via {}",
-            preset.id,
-            backend.as_str()
-        );
         let peak = dsp::peak_gain_db(&preset, 48_000.0);
         if peak > 0.5 {
             warn!(
@@ -234,28 +270,9 @@ impl EqManager {
                 preset.preamp - peak
             );
         }
-        let status = self.status.clone();
-        self.task = Some(match backend {
-            Backend::PipeWire | Backend::PipeWireLegacy => {
-                let restore = Arc::new(Mutex::new(pipewire::Restore::default()));
-                let smart = backend == Backend::PipeWire;
-                let handle = tokio::spawn(pipewire::supervise(
-                    preset,
-                    address,
-                    smart,
-                    status,
-                    restore.clone(),
-                ));
-                (handle, Restore::PipeWire(restore))
-            }
-            Backend::PulseAudio => {
-                let restore = Arc::new(Mutex::new(pulse::Restore::default()));
-                let handle =
-                    tokio::spawn(pulse::supervise(preset, address, status, restore.clone()));
-                (handle, Restore::Pulse(restore))
-            }
-            Backend::None => unreachable!(),
-        });
+        let restore = Restore::default();
+        let handle = tokio::spawn(run(preset, address, self.choice, self.status.clone(), restore.clone()));
+        self.task = Some((handle, restore));
     }
 
     async fn stop_task(&mut self) {
@@ -266,18 +283,12 @@ impl EqManager {
         // Wait for the abort so child processes (kill_on_drop) are gone
         // before we restore routing.
         let _ = handle.await;
-        match restore {
-            Restore::PipeWire(r) => std::mem::take(&mut *r.lock().await).run().await,
-            Restore::Pulse(r) => std::mem::take(&mut *r.lock().await).run().await,
-        }
+        restore.run().await;
     }
 
     /// Stop everything and undo routing changes (daemon shutdown).
     pub async fn shutdown(&mut self) {
         self.stop_task().await;
-        if self.preset.is_some() {
-            warn!("EQ stopped for shutdown");
-        }
     }
 }
 
@@ -456,5 +467,42 @@ mod tests {
             !modules_after.contains("sink_name=airpods_eq "),
             "null sink left loaded"
         );
+    }
+
+    /// The A2DP sink disappearing (e.g. a call switching profiles) must hand
+    /// routing back immediately, then take over again when it returns.
+    #[tokio::test]
+    #[ignore]
+    async fn live_pulseaudio_sink_loss_restores_routing() {
+        let fake = FakePods::new().await;
+        let state = create_shared_state();
+        let mut eq = EqManager::new(state.clone(), EqBackendChoice::Pulseaudio).await;
+        let default_before = run_cmd("pactl", &["get-default-sink"]).await.unwrap();
+        eq.select(Some(bass_boost())).await;
+        eq.set_device(Some(FAKE_MAC.parse().unwrap())).await;
+        let st = state.clone();
+        assert!(wait_for(async || st.current().eq_status == "active").await);
+
+        fake.remove().await; // the "AirPods" sink goes away
+        let st = state.clone();
+        let paused = wait_for(async || st.current().eq_status == "waiting").await;
+        let default_while_gone = run_cmd("pactl", &["get-default-sink"]).await.unwrap();
+        let modules_while_gone = short_list("modules").await;
+
+        let fake = FakePods::new().await; // and comes back
+        let st = state.clone();
+        let resumed = wait_for(async || st.current().eq_status == "active").await;
+        let default_after_return = run_cmd("pactl", &["get-default-sink"]).await.unwrap();
+
+        eq.shutdown().await;
+        fake.remove().await;
+        let default_end = run_cmd("pactl", &["get-default-sink"]).await.unwrap();
+
+        assert!(paused, "status never went to waiting");
+        assert_eq!(default_while_gone, default_before, "default not handed back while the sink was gone");
+        assert!(!modules_while_gone.contains("sink_name=airpods_eq "), "EQ sink kept loaded with nowhere to go");
+        assert!(resumed, "EQ didn't resume when the sink returned");
+        assert_eq!(default_after_return.trim(), pulse::SINK_NAME);
+        assert_eq!(default_end, default_before);
     }
 }
