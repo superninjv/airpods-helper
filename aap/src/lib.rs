@@ -1,10 +1,15 @@
-pub mod commands;
-pub mod parser;
+//! Apple Accessory Protocol (AAP): packet builders, parser and model table,
+//! shared by the Linux daemon and the Windows build.
+//!
+//! Transport: L2CAP PSM 0x1001 (BR/EDR). Control packets share the header
+//! `04 00 04 00 [cmd] 00 [payload]`.
 
-/// AAP (Apple Accessory Protocol) constants
-///
-/// Transport: L2CAP, PSM 0x1001 (4097)
-/// All control packets share header: 04 00 04 00 [cmd] 00 [payload]
+mod buds;
+pub mod commands;
+pub mod models;
+pub mod parser;
+pub use buds::BudTracker;
+
 /// L2CAP PSM for AAP control channel
 pub const AAP_PSM: u16 = 0x1001;
 
@@ -12,7 +17,6 @@ pub const AAP_PSM: u16 = 0x1001;
 pub const AIRPODS_SERVICE_UUID: &str = "74ec2172-0bad-4d01-8f77-997b2be0722a";
 
 /// Apple vendor ID for BLE manufacturer data (used in scanning/identification)
-#[allow(dead_code)]
 pub const APPLE_COMPANY_ID: u16 = 0x004C;
 
 /// Common packet header for control commands
@@ -140,7 +144,7 @@ impl MicMode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "auto" | "automatic" => Some(Self::Automatic),
             "right" => Some(Self::Right),
@@ -179,7 +183,7 @@ impl AncMode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "off" => Some(Self::Off),
             "noise" => Some(Self::NoiseCancellation),

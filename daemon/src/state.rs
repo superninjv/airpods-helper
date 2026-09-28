@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::watch;
 
-use crate::aap::AncMode;
+use aap::AncMode;
 
 /// Shared AirPods state, updated by the L2CAP reader and consumed by D-Bus
 #[derive(Debug, Clone, PartialEq)]

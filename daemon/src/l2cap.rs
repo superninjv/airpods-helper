@@ -4,10 +4,9 @@ use std::io;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::aap;
-use crate::aap::parser::{self, AapEvent, AudioSource};
-use crate::models;
 use crate::state::SharedState;
+use aap::models;
+use aap::parser::{self, AapEvent, AudioSource};
 
 /// Commands that can be sent to the AirPods over L2CAP
 #[derive(Debug)]
@@ -19,17 +18,6 @@ pub enum L2capCommand {
     SetOneBudAnc(bool),
     SetVolumeSwipe(bool),
     SetMicMode(aap::MicMode),
-}
-
-/// Per-session protocol context that isn't part of the published state.
-#[derive(Debug, Default)]
-struct Session {
-    /// Which bud is primary. Ear-detection packets are ordered
-    /// (primary, secondary); the primary is whichever bud is listed first in
-    /// battery notifications and swaps when e.g. the right bud goes in the case.
-    primary: Option<aap::BatteryComponent>,
-    /// Last raw ear status, re-mapped when the primary changes.
-    ear: Option<parser::EarDetectionUpdate>,
 }
 
 /// Connect to AirPods via L2CAP and run the read/write loop
@@ -121,7 +109,7 @@ pub async fn run(
         s.address = address.to_string();
     });
     info!("handshake complete, entering main loop");
-    let mut session = Session::default();
+    let mut buds = aap::BudTracker::default();
 
     // Main read/write loop
     loop {
@@ -140,7 +128,7 @@ pub async fn run(
                                 break;
                             }
                             Ok(event) => {
-                                apply_event(&state, &mut session, &event);
+                                apply_event(&state, &mut buds, &event);
                                 let _ = event_tx.send(event).await;
                             }
                             Err(e) => {
@@ -229,25 +217,19 @@ pub async fn run(
 }
 
 /// Apply a parsed AAP event to the shared state
-fn apply_event(state: &SharedState, session: &mut Session, event: &AapEvent) {
+fn apply_event(state: &SharedState, buds: &mut aap::BudTracker, event: &AapEvent) {
     match event {
         AapEvent::Battery(b) => {
-            if b.primary.is_some() && b.primary != session.primary {
-                session.primary = b.primary;
-                if let Some(ear) = session.ear {
-                    apply_ear(state, session.primary, ear);
-                }
+            if let Some((l, r)) = buds.on_battery(b) {
+                state.update(|s| (s.ear_left, s.ear_right) = (l, r));
             }
-            // A bud/case reported as disconnected (e.g. in a closed case)
-            // carries a meaningless level — show it as unknown.
-            let level = |e: &parser::BatteryEntry| if e.connected { e.level as i32 } else { -1 };
             state.update(|s| {
                 if let Some(left) = &b.left {
-                    s.battery_left = level(left);
+                    s.battery_left = left.display_level();
                     s.charging_left = left.connected && left.charging;
                 }
                 if let Some(right) = &b.right {
-                    s.battery_right = level(right);
+                    s.battery_right = right.display_level();
                     s.charging_right = right.connected && right.charging;
                 }
                 if let Some(case) = &b.case {
@@ -261,8 +243,8 @@ fn apply_event(state: &SharedState, session: &mut Session, event: &AapEvent) {
             });
         }
         AapEvent::EarDetection(ed) => {
-            session.ear = Some(*ed);
-            apply_ear(state, session.primary, *ed);
+            let (l, r) = buds.on_ear(*ed);
+            state.update(|s| (s.ear_left, s.ear_right) = (l, r));
         }
         AapEvent::AncMode(mode) => {
             state.update(|s| s.anc_mode = *mode);
@@ -271,7 +253,7 @@ fn apply_event(state: &SharedState, session: &mut Session, event: &AapEvent) {
             state.update(|s| s.conversational_awareness = *enabled);
         }
         AapEvent::ConversationalActivity(activity) => {
-            use crate::aap::parser::CaActivity;
+            use aap::parser::CaActivity;
             let value = match activity {
                 CaActivity::Speaking => "speaking",
                 CaActivity::Stopped => "stopped",
@@ -321,23 +303,4 @@ fn apply_event(state: &SharedState, session: &mut Session, event: &AapEvent) {
         }
         _ => {}
     }
-}
-
-fn apply_ear(
-    state: &SharedState,
-    primary: Option<aap::BatteryComponent>,
-    ed: parser::EarDetectionUpdate,
-) {
-    // Before the first battery packet we don't know the primary; the right
-    // bud is primary by default on every model we've seen.
-    let left_is_primary = primary == Some(aap::BatteryComponent::Left);
-    let (left, right) = if left_is_primary {
-        (ed.primary, ed.secondary)
-    } else {
-        (ed.secondary, ed.primary)
-    };
-    state.update(|s| {
-        s.ear_left = left.is_in_ear();
-        s.ear_right = right.is_in_ear();
-    });
 }

@@ -21,12 +21,12 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::info;
 
-use crate::aap::AncMode;
 use crate::l2cap::L2capCommand;
 use crate::state::SharedState;
+use aap::AncMode;
 
 /// Shared command sender (swapped per L2CAP session, just like Linux daemon)
 pub type SharedCmdTx = Arc<Mutex<Option<mpsc::Sender<L2capCommand>>>>;
@@ -110,10 +110,13 @@ async fn post_anc(
     State(app): State<AppState>,
     Json(req): Json<AncRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let mode = AncMode::from_str(&req.mode).ok_or_else(|| {
+    let mode = AncMode::parse(&req.mode).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
-            format!("invalid ANC mode: {} (use: off, noise, transparency, adaptive)", req.mode),
+            format!(
+                "invalid ANC mode: {} (use: off, noise, transparency, adaptive)",
+                req.mode
+            ),
         )
     })?;
 
@@ -149,11 +152,7 @@ async fn post_noise(
     State(app): State<AppState>,
     Json(req): Json<NoiseLevelRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    send_command(
-        &app.cmd_tx,
-        L2capCommand::SetAdaptiveNoiseLevel(req.level),
-    )
-    .await?;
+    send_command(&app.cmd_tx, L2capCommand::SetAdaptiveNoiseLevel(req.level)).await?;
     Ok(Json(
         serde_json::json!({ "adaptive_noise_level": req.level }),
     ))
@@ -176,10 +175,7 @@ async fn post_volume_swipe(
 }
 
 /// Send a command to the active L2CAP session
-async fn send_command(
-    cmd_tx: &SharedCmdTx,
-    cmd: L2capCommand,
-) -> Result<(), (StatusCode, String)> {
+async fn send_command(cmd_tx: &SharedCmdTx, cmd: L2capCommand) -> Result<(), (StatusCode, String)> {
     let guard = cmd_tx.lock().await;
     match guard.as_ref() {
         Some(tx) => tx.send(cmd).await.map_err(|_| {

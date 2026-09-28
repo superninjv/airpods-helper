@@ -1,5 +1,5 @@
 [workspace]
-members = ["daemon", "cli"]
+members = ["aap", "daemon", "cli"]
 # windows/ is excluded from the workspace because it depends on Windows-specific
 # crates (windows-rs, btleplug WinRT backend) that cannot build on Linux.
 # On a Windows dev machine, either:
@@ -9,6 +9,8 @@ exclude = ["windows", "app/src-tauri"]
 resolver = "2"
 
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 lto = true
 strip = true
+codegen-units = 1
+panic = "abort"

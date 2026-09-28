@@ -29,7 +29,6 @@ pub enum AapEvent {
     AdaptiveVolume(bool),
     ChimeVolume(u8),
     MicMode(MicMode),
-    HeadTracking(#[allow(dead_code)] Vec<u8>),
     AudioSource(AudioSource),
     Disconnected,
 }
@@ -43,7 +42,7 @@ pub enum AudioSource {
     Unknown(u8),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BatteryUpdate {
     /// The bud listed first is the primary (the one talking to the host).
     /// Ear-detection packets are ordered primary/secondary, so this is what
@@ -54,7 +53,7 @@ pub struct BatteryUpdate {
     pub case: Option<BatteryEntry>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BatteryEntry {
     pub level: u8,
     pub charging: bool,
@@ -62,7 +61,7 @@ pub struct BatteryEntry {
     pub connected: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EarDetectionUpdate {
     pub primary: EarStatus,
     pub secondary: EarStatus,
@@ -122,68 +121,27 @@ pub fn parse(data: &[u8]) -> Result<AapEvent, ParseError> {
         CMD_EAR_DETECTION => parse_ear_detection(&data[6..]),
         CMD_CONTROL => parse_control(&data[6..]),
         CMD_AUDIO_SOURCE => parse_audio_source(&data[6..]),
-        CMD_HEAD_TRACKING => {
-            // Spatial audio head tracking data — high frequency, variable length
-            debug!("head tracking data, len={}", data.len());
-            Ok(AapEvent::HeadTracking(data[6..].to_vec()))
-        }
-        CMD_STEM_PRESS => {
-            // Stem press events are handled by the OS bluetooth stack
-            debug!("stem press event, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
         CMD_DEVICE_INFO => parse_device_info(data),
-        CMD_CONNECTED_DEVICES => {
-            // List of paired/connected devices — informational
-            debug!("connected devices notification, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
         CMD_CA_ACTIVITY => parse_ca_activity(&data[6..]),
-        CMD_EQ_DATA => {
-            // EQ settings data from device (140 bytes typical)
-            debug!("EQ data packet, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
 
-        // Known but unhandled commands — log at debug to reduce noise
-        0x02 => {
-            // Likely device capabilities/features exchange
-            debug!("capabilities packet, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x08 => {
-            debug!("unknown command 0x08, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x0C => {
-            debug!("unknown command 0x0C, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x10 | 0x11 => {
-            // Smart routing / device handoff
-            debug!("smart routing packet 0x{cmd:02X}, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x12 => {
-            // Secondary control (case sounds, transparency customization)
-            debug!("secondary control packet, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x14 => {
-            // Connected device MAC address
-            debug!("connected MAC notification, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x4E => {
-            debug!("unknown command 0x4E, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x52 => {
-            debug!("unknown command 0x52, len={}", data.len());
-            Err(ParseError::UnknownCommand(cmd))
-        }
-        0x55 => {
-            debug!("unknown command 0x55, len={}", data.len());
+        // Known but unhandled: stem presses (handled by the BT stack), head
+        // tracking (high-rate spatial audio data), connected-device lists,
+        // device EQ data, capabilities, smart routing, secondary control…
+        CMD_STEM_PRESS
+        | CMD_HEAD_TRACKING
+        | CMD_CONNECTED_DEVICES
+        | CMD_EQ_DATA
+        | 0x02
+        | 0x08
+        | 0x0C
+        | 0x10
+        | 0x11
+        | 0x12
+        | 0x14
+        | 0x4E
+        | 0x52
+        | 0x55 => {
+            debug!("unhandled AAP command 0x{cmd:02X}, len={}", data.len());
             Err(ParseError::UnknownCommand(cmd))
         }
 
@@ -315,46 +273,18 @@ fn parse_control(payload: &[u8]) -> Result<AapEvent, ParseError> {
             Ok(AapEvent::MicMode(mode))
         }
 
-        // Known sub-commands — log at debug to reduce noise
-        SUB_DOUBLE_CLICK_INTERVAL => {
-            debug!("double-click interval: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_CLICK_HOLD_INTERVAL => {
-            debug!("click-hold interval: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_VOLUME_SWIPE_INTERVAL => {
-            debug!("volume swipe interval: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_CALL_MANAGEMENT => {
-            debug!("call management config: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        0x29 => {
-            // SSL — undocumented
-            debug!("control sub-command 0x29 (SSL): 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_HEARING_AID => {
-            debug!("hearing aid config: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_GAIN_SWIPE => {
-            debug!("gain swipe config: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_HEARING_ASSIST => {
-            debug!("hearing assist config: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        SUB_SLEEP_DETECTION => {
-            debug!("sleep detection config: 0x{value:02X}");
-            Err(ParseError::UnknownCommand(sub_cmd))
-        }
-        0x3E => {
-            debug!("control sub-command 0x3E: 0x{value:02X}");
+        // Known sub-commands we don't act on
+        SUB_DOUBLE_CLICK_INTERVAL
+        | SUB_CLICK_HOLD_INTERVAL
+        | SUB_VOLUME_SWIPE_INTERVAL
+        | SUB_CALL_MANAGEMENT
+        | SUB_SSL
+        | SUB_HEARING_AID
+        | SUB_GAIN_SWIPE
+        | SUB_HEARING_ASSIST
+        | SUB_SLEEP_DETECTION
+        | 0x3E => {
+            debug!("unhandled control sub-command 0x{sub_cmd:02X} = 0x{value:02X}");
             Err(ParseError::UnknownCommand(sub_cmd))
         }
 
@@ -641,18 +571,6 @@ mod tests {
         let data = [0x04, 0x00, 0x04, 0x00, 0x0E, 0x00, 0x00, 0x00, 0x00];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::AudioSource(AudioSource::None)));
-    }
-
-    #[test]
-    fn test_parse_head_tracking() {
-        // Head tracking packets are variable length
-        let data = [0x04, 0x00, 0x04, 0x00, 0x17, 0x00, 0x01, 0x02, 0x03];
-        let event = parse(&data).unwrap();
-        if let AapEvent::HeadTracking(payload) = event {
-            assert_eq!(payload, vec![0x01, 0x02, 0x03]);
-        } else {
-            panic!("expected HeadTracking event");
-        }
     }
 
     #[test]
