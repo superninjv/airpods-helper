@@ -1,15 +1,33 @@
 {
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main window",
-  "windows": ["main"],
+  "description": "Main window: listen for backend events and call the app's own commands. Nothing else (fs, shell, http, ...) is exposed to the webview.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
-    "core:default",
-    "notification:default",
-    "notification:allow-notify",
-    "notification:allow-request-permission",
-    "autostart:default",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-status",
+    "allow-retry-daemon",
+    "allow-set-anc-mode",
+    "allow-set-adaptive-noise-level",
+    "allow-set-conversational-awareness",
+    "allow-set-one-bud-anc",
+    "allow-set-volume-swipe",
+    "allow-set-mic-mode",
+    "allow-set-setting",
+    "allow-set-start-on-login",
+    "allow-list-paired",
+    "allow-connect-device",
+    "allow-disconnect-device",
+    "allow-reconnect",
+    "allow-pair-device",
+    "allow-quick-pair-scan",
+    "allow-refresh-eq-presets",
+    "allow-get-eq-preset",
+    "allow-set-eq-preset",
+    "allow-save-eq-preset",
+    "allow-delete-eq-preset"
   ]
 }
