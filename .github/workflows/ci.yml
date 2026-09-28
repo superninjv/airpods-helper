@@ -46,7 +46,7 @@ jobs:
         run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: cargo clippy
-        run: cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} -- -D warnings
 
   build:
     name: Build release binary
@@ -124,7 +124,7 @@ jobs:
 
       - name: cargo clippy (windows crate)
         working-directory: windows
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
   windows-build:
     name: Build Windows release

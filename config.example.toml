@@ -1,15 +1,22 @@
+# airpods-helper configuration. Most of these can also be changed live with
+# `airpods-cli set <name> <value>` or from the app; the daemon keeps comments.
+
 [device]
-# address = "AA:BB:CC:DD:EE:FF"  # auto-detected if not set
-# name = "Kevin's AirPods Pro"
+# Only use this pair of AirPods (others are ignored). Auto-detected if unset.
+# address = "AA:BB:CC:DD:EE:FF"
 
 [eq]
-active_preset = "flat"
+# EQ preset id (see `airpods-cli eq list`); empty = EQ off
+active_preset = ""
+# Apply the preset whenever the AirPods connect
 auto_load = true
+# Audio backend: "auto", "pipewire" or "pulseaudio"
+backend = "auto"
 
 [ear_detection]
-pause_media = true
-resume_media = true
+pause_media = true    # pause when a bud is taken out
+resume_media = true   # resume when it goes back in
 
 [reconnect]
 auto_reconnect = true
-max_retries = 3
+max_retries = 3       # backoff: 2s, 4s, 8s, ...

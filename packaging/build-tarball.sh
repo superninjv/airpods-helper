@@ -1,17 +1,17 @@
 #!/bin/bash
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
-VERSION="0.2.2"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' daemon/Cargo.toml | head -1)"
 DIST="airpods-helper-${VERSION}-x86_64-linux"
 
-cd "$(dirname "$0")/.."
 
 # Build
 cargo build --workspace --release
 
 # Clean and create dist
 rm -rf "packaging/$DIST" "packaging/$DIST.tar.gz"
-mkdir -p "packaging/$DIST"/{bin,systemd,dbus,eq-presets}
+mkdir -p "packaging/$DIST"/{bin,systemd,dbus}
 
 # Binaries
 cp target/release/airpods-daemon "packaging/$DIST/bin/"
@@ -21,8 +21,7 @@ cp target/release/airpods-cli "packaging/$DIST/bin/"
 cp daemon/airpods-daemon.service "packaging/$DIST/systemd/"
 cp daemon/org.costa.AirPods.service "packaging/$DIST/dbus/"
 
-# EQ presets + config
-cp eq-presets/*.toml "packaging/$DIST/eq-presets/"
+# Config
 cp config.example.toml "packaging/$DIST/"
 cp LICENSE "packaging/$DIST/"
 
@@ -39,16 +38,26 @@ install -Dm755 bin/airpods-cli "$PREFIX/bin/airpods-cli"
 install -Dm644 systemd/airpods-daemon.service "$HOME/.config/systemd/user/airpods-daemon.service"
 install -Dm644 dbus/org.costa.AirPods.service "$HOME/.local/share/dbus-1/services/org.costa.AirPods.service"
 
-install -dm755 "$HOME/.config/airpods-helper/eq/"
-cp -n eq-presets/*.toml "$HOME/.config/airpods-helper/eq/" 2>/dev/null || true
+install -dm755 "$HOME/.config/airpods-helper"
 cp -n config.example.toml "$HOME/.config/airpods-helper/config.toml" 2>/dev/null || true
 
 systemctl --user daemon-reload
 
 echo ""
+# The service/activation files point at ~/.local/bin; fix them for other prefixes.
+for f in "$HOME/.config/systemd/user/airpods-daemon.service" "$HOME/.local/share/dbus-1/services/org.costa.AirPods.service"; do
+    sed -i "s|%h/.local/bin/airpods-daemon|$PREFIX/bin/airpods-daemon|" "$f"
+done
+# Re-applying caps is needed on every upgrade (replacing the binary drops them).
+echo "Granting Bluetooth L2CAP capability (needs sudo)..."
+sudo setcap 'cap_net_raw,cap_net_admin+eip' "$PREFIX/bin/airpods-daemon" || \
+    echo "  setcap failed; run: sudo setcap 'cap_net_raw,cap_net_admin+eip' $PREFIX/bin/airpods-daemon"
+systemctl --user try-restart airpods-daemon.service 2>/dev/null || true
+
+echo ""
 echo "Installed. Next steps:"
-echo "  sudo setcap 'cap_net_raw,cap_net_admin+eip' $PREFIX/bin/airpods-daemon"
 echo "  systemctl --user enable --now airpods-daemon.service"
+echo "  airpods-cli doctor"
 INSTALL
 chmod +x "packaging/$DIST/install.sh"
 

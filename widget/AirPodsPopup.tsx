@@ -2,31 +2,60 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import Gtk4LayerShell from "gi://Gtk4LayerShell"
 import GLib from "gi://GLib"
-import { createState } from "gnim"
-import { getState, setConnectionCallbacks } from "./AirPodsService"
+import { createState, With } from "gnim"
+import { getState, isHeadphones, setConnectionCallbacks, type AirPodsState } from "./AirPodsService"
 
 const [getVisible, setVisible] = createState(false)
 
 let popupWindow: Gtk.Window | null = null
 let dismissTimeout: number | null = null
 
+const ANC_LABELS: Record<string, string> = {
+  off: "ANC off",
+  noise: "Noise Cancellation",
+  transparency: "Transparency",
+  adaptive: "Adaptive",
+}
+
+/** One battery row; level -1 (unknown / not reported) renders as "\u2014". */
 function batteryBar(label: string, level: number, charging: boolean): Gtk.Widget {
+  const known = level >= 0
   const color =
+    !known ? "airpods-bat-unknown" :
     level <= 15 ? "airpods-bat-red" :
     level <= 30 ? "airpods-bat-yellow" :
     "airpods-bat-green"
 
   return (
     <box class={`airpods-bat-row ${color}`} spacing={6}>
-      <label class="airpods-bat-label" label={label} widthChars={5} xalign={0} />
+      <label class="airpods-bat-label" label={label} widthChars={7} xalign={0} />
       <levelbar
         class="airpods-bat-bar"
-        value={level / 100}
+        value={known ? level / 100 : 0}
         hexpand={true}
       />
-      <label class="airpods-bat-pct" label={`${level}%${charging ? " \u26A1" : ""}`} widthChars={6} xalign={1} />
+      <label
+        class="airpods-bat-pct"
+        label={`${known ? `${level}%` : "\u2014"}${charging ? " \u26A1" : ""}`}
+        widthChars={6}
+        xalign={1}
+      />
     </box>
   ) as Gtk.Widget
+}
+
+/** Rows for the current model: one "Battery" row for over-ear, else L/R/Case. */
+function batteryRows(s: AirPodsState): Gtk.Widget {
+  const rows = isHeadphones(s)
+    ? [batteryBar("Battery", Math.max(s.batteryLeft, s.batteryRight), s.chargingLeft || s.chargingRight)]
+    : [
+        batteryBar("Left", s.batteryLeft, s.chargingLeft),
+        batteryBar("Right", s.batteryRight, s.chargingRight),
+        batteryBar("Case", s.batteryCase, s.chargingCase),
+      ]
+  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4 })
+  for (const r of rows) box.append(r)
+  return box as Gtk.Widget
 }
 
 function createPopupWindow(gdkmonitor: Gdk.Monitor): Gtk.Window {
@@ -55,13 +84,13 @@ function createPopupWindow(gdkmonitor: Gdk.Monitor): Gtk.Window {
         <box orientation={Gtk.Orientation.VERTICAL}>
           <label
             class="airpods-model"
-            label={getState.as((s) => s.model || "AirPods")}
+            label={getState.as((s) => s.modelName || s.model || "AirPods")}
             xalign={0}
           />
           <label
             class="airpods-status"
             label={getState.as((s) =>
-              s.features.includes("anc") ? `ANC: ${s.ancMode}` : "Connected"
+              s.features.includes("anc") ? (ANC_LABELS[s.ancMode] ?? s.ancMode) : "Connected"
             )}
             xalign={0}
           />
@@ -69,33 +98,7 @@ function createPopupWindow(gdkmonitor: Gdk.Monitor): Gtk.Window {
       </box>
 
       <box class="airpods-batteries" orientation={Gtk.Orientation.VERTICAL} spacing={4}>
-        <box
-          visible={getState.as((s) => s.batteryLeft >= 0)}
-        >
-          {getState.as((s) =>
-            s.batteryLeft >= 0
-              ? batteryBar("Left", s.batteryLeft, s.chargingLeft)
-              : (<box />) as Gtk.Widget
-          )}
-        </box>
-        <box
-          visible={getState.as((s) => s.batteryRight >= 0)}
-        >
-          {getState.as((s) =>
-            s.batteryRight >= 0
-              ? batteryBar("Right", s.batteryRight, s.chargingRight)
-              : (<box />) as Gtk.Widget
-          )}
-        </box>
-        <box
-          visible={getState.as((s) => s.batteryCase >= 0)}
-        >
-          {getState.as((s) =>
-            s.batteryCase >= 0
-              ? batteryBar("Case", s.batteryCase, s.chargingCase)
-              : (<box />) as Gtk.Widget
-          )}
-        </box>
+        <With value={getState}>{(s: AirPodsState) => batteryRows(s)}</With>
       </box>
     </box>
   ) as Gtk.Widget
@@ -109,7 +112,8 @@ function createPopupWindow(gdkmonitor: Gdk.Monitor): Gtk.Window {
   win.add_controller(click)
 
   // Bind visibility
-  getVisible.subscribe((visible: boolean) => {
+  getVisible.subscribe(() => {
+    const visible = getVisible()
     if (visible) {
       win.present()
       // Small delay for animation

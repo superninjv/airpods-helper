@@ -1,314 +1,412 @@
-mod aap;
 mod bluez;
 mod config;
 mod dbus;
 mod eq;
 mod l2cap;
-mod models;
 mod mpris;
 mod state;
 
-use std::sync::Arc;
 use bluer::Address;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Mutex, mpsc};
+use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::aap::parser::AapEvent;
 use crate::bluez::BlueZEvent;
-use crate::config::Config;
-use crate::dbus::SharedCmdTx;
-use crate::eq::EqManager;
-use crate::state::create_shared_state;
+use crate::config::SharedConfig;
+use crate::dbus::{Control, SharedCmdTx};
+use crate::eq::{EqManager, EqPreset};
+use crate::state::{SharedState, create_shared_state};
+use aap::parser::AapEvent;
 
-#[tokio::main]
+/// Messages from an L2CAP session task, tagged with its session id so late
+/// messages from a superseded session are ignored.
+enum SessionMsg {
+    Event(u64, AapEvent),
+    Ended(u64),
+}
+
+struct ActiveSession {
+    id: u64,
+    address: Address,
+    handle: JoinHandle<()>,
+}
+
+struct Daemon {
+    state: SharedState,
+    config: SharedConfig,
+    cmd_tx: SharedCmdTx,
+    session_tx: mpsc::Sender<SessionMsg>,
+    /// Delayed AAP session retries come back through here.
+    retry_tx: mpsc::Sender<Address>,
+    /// The AirPods whose Bluetooth link is up and that we manage. Separate
+    /// from `session`: the AAP control channel can drop and be retried while
+    /// the audio link stays up, and the link-down event can arrive after the
+    /// session has already ended.
+    bt_device: Option<Address>,
+    /// AAP session restarts since the last successful handshake.
+    aap_retries: u32,
+    eq: EqManager,
+    session: Option<ActiveSession>,
+    next_session_id: u64,
+    reconnect: Option<JoinHandle<()>>,
+    last_address: Option<Address>,
+    /// Set when the user asked to disconnect, so we don't fight them.
+    user_disconnected: bool,
+}
+
+// Single-threaded: the daemon is idle almost all the time, and one thread
+// is plenty for BlueZ/D-Bus/L2CAP traffic. (The multi-thread runtime spawned
+// a worker per CPU core.)
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("airpods_daemon=info".parse().unwrap()),
-        )
-        .init();
+    // RUST_LOG uses `target=level` directives (e.g. `airpods_daemon=debug`).
+    // Parsed with `Targets` rather than EnvFilter to avoid pulling in regex.
+    let filter: tracing_subscriber::filter::Targets = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| "airpods_daemon=info".parse().expect("valid default filter"));
+    let under_journald = std::env::var_os("JOURNAL_STREAM").is_some();
+    let fmt = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()));
+    use tracing_subscriber::prelude::*;
+    if under_journald {
+        // journald timestamps every line already
+        tracing_subscriber::registry()
+            .with(fmt.without_time())
+            .with(filter)
+            .init();
+    } else {
+        tracing_subscriber::registry().with(fmt).with(filter).init();
+    }
 
-    info!("airpods-daemon starting");
+    info!("airpods-daemon {} starting", env!("CARGO_PKG_VERSION"));
 
-    let config = Config::load();
+    let config = config::shared(config::Config::load());
     let state = create_shared_state();
-
-    // Shared L2CAP command sender (swapped per session)
     let cmd_tx: SharedCmdTx = Arc::new(Mutex::new(None));
-
-    // Channel for AAP events from L2CAP reader
-    let (event_tx, mut event_rx) = mpsc::channel::<AapEvent>(64);
-
-    // Channel for BlueZ events
+    let (control_tx, mut control_rx) = mpsc::channel::<Control>(16);
     let (bluez_tx, mut bluez_rx) = mpsc::channel::<BlueZEvent>(16);
+    let (session_tx, mut session_rx) = mpsc::channel::<SessionMsg>(64);
+    let (retry_tx, mut retry_rx) = mpsc::channel::<Address>(4);
 
-    // Channel for D-Bus reconnect requests
-    let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(4);
+    let connection = dbus::serve(state.clone(), config.clone(), cmd_tx.clone(), control_tx).await?;
+    tokio::spawn(dbus::run_property_notifier(
+        connection.clone(),
+        state.subscribe(),
+    ));
+    tokio::spawn(mpris::watch_ear_detection(
+        state.subscribe(),
+        config.clone(),
+    ));
 
-    // Channel for EQ commands from D-Bus
-    let (eq_tx, mut eq_rx) = mpsc::channel::<eq::EqCommand>(8);
+    let backend_choice = config::read(&config, |c| c.eq.backend);
+    let mut daemon = Daemon {
+        eq: EqManager::new(state.clone(), backend_choice).await,
+        state,
+        config,
+        cmd_tx,
+        session_tx,
+        retry_tx,
+        bt_device: None,
+        aap_retries: 0,
+        session: None,
+        next_session_id: 0,
+        reconnect: None,
+        last_address: None,
+        user_disconnected: false,
+    };
+    daemon.restore_eq_selection().await;
 
-    // EQ manager
-    let mut eq_manager = EqManager::new();
-
-    // Start D-Bus service
-    let connection = dbus::serve(state.clone(), cmd_tx.clone(), reconnect_tx, eq_tx).await?;
-    info!("D-Bus service ready");
-
-    // Start MPRIS ear detection watcher
-    let mpris_state = state.clone();
-    tokio::spawn(async move {
-        let rx = mpris_state.subscribe();
-        mpris::watch_ear_detection(rx).await;
-    });
-
-    // Start BlueZ monitor (restarts if the event stream drops)
+    // BlueZ monitor; restarts if BlueZ or the adapter goes away.
     tokio::spawn(async move {
         loop {
             match bluez::monitor(bluez_tx.clone()).await {
-                Ok(()) => {
-                    info!("BlueZ monitor ended, restarting in 5s");
-                }
-                Err(e) => {
-                    error!("BlueZ monitor error: {e}, restarting in 5s");
-                }
+                Ok(()) => info!("BlueZ monitor ended, restarting in 5s"),
+                Err(e) => error!("BlueZ monitor error: {e}, restarting in 5s"),
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 
-    // Main event loop: handle BlueZ connect/disconnect and AAP events
-    let mut l2cap_handle: Option<tokio::task::JoinHandle<()>> = None;
-    let mut reconnect_handle: Option<tokio::task::JoinHandle<()>> = None;
-    let mut last_address: Option<Address> = None;
-
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
     info!("waiting for AirPods connection...");
 
     loop {
         tokio::select! {
-            // BlueZ events
-            Some(event) = bluez_rx.recv() => {
-                match event {
-                    BlueZEvent::AirPodsConnected(addr) => {
-                        info!("AirPods detected at {addr}, establishing AAP connection");
+            Some(event) = bluez_rx.recv() => match event {
+                BlueZEvent::AirPodsConnected(addr) => daemon.on_bt_connected(addr).await,
+                BlueZEvent::AirPodsDisconnected(addr) => daemon.on_bt_disconnected(addr).await,
+            },
+            Some(msg) = session_rx.recv() => match msg {
+                SessionMsg::Event(id, event) if daemon.is_current(id) => daemon.on_aap_event(event).await,
+                SessionMsg::Ended(id) if daemon.is_current(id) => daemon.on_session_ended().await,
+                _ => {}
+            },
+            Some(addr) = retry_rx.recv() => daemon.on_retry(addr).await,
+            Some(ctl) = control_rx.recv() => daemon.on_control(ctl).await,
+            _ = sigterm.recv() => break,
+            _ = sigint.recv() => break,
+        }
+    }
 
-                        // Cancel any pending reconnect task
-                        if let Some(handle) = reconnect_handle.take() {
-                            handle.abort();
-                            info!("cancelled pending reconnect task");
-                        }
+    info!("shutting down");
+    daemon.eq.shutdown().await;
+    if let Some(s) = daemon.session.take() {
+        s.handle.abort();
+    }
+    if let Some(r) = daemon.reconnect.take() {
+        r.abort();
+    }
+    Ok(())
+}
 
-                        // Store last known address
-                        last_address = Some(addr);
+impl Daemon {
+    fn is_current(&self, id: u64) -> bool {
+        self.session.as_ref().is_some_and(|s| s.id == id)
+    }
 
-                        // Abort any existing L2CAP connection
-                        if let Some(handle) = l2cap_handle.take() {
-                            handle.abort();
-                        }
-
-                        let state_clone = state.clone();
-                        let event_tx_clone = event_tx.clone();
-                        let cmd_tx_clone = cmd_tx.clone();
-                        let (session_tx, session_rx) = mpsc::channel(32);
-
-                        // Store the new session's sender so D-Bus can reach it
-                        *cmd_tx.lock().await = Some(session_tx);
-
-                        l2cap_handle = Some(tokio::spawn(async move {
-                            match l2cap::run(addr, state_clone, session_rx, event_tx_clone).await {
-                                Ok(()) => info!("L2CAP session ended cleanly"),
-                                Err(e) => error!("L2CAP session error: {e}"),
-                            }
-                            // Clear the sender when session ends
-                            *cmd_tx_clone.lock().await = None;
-                        }));
-                    }
-                    BlueZEvent::AirPodsDisconnected(addr) => {
-                        info!("AirPods disconnected: {addr}");
-                        if let Some(handle) = l2cap_handle.take() {
-                            handle.abort();
-                        }
-                        *cmd_tx.lock().await = None;
-                        eq_manager.stop().await;
-                        state.reset();
-                        dbus::emit_device_disconnected(&connection).await;
-                        dbus::emit_properties_changed(&connection, &["Connected", "EqPreset"]).await;
-
-                        // Store last known address
-                        last_address = Some(addr);
-
-                        // Auto-reconnect if enabled
-                        if config.reconnect.auto_reconnect {
-                            // Cancel any existing reconnect task
-                            if let Some(handle) = reconnect_handle.take() {
-                                handle.abort();
-                            }
-
-                            let max_retries = config.reconnect.max_retries;
-                            reconnect_handle = Some(tokio::spawn(async move {
-                                reconnect_with_backoff(addr, max_retries).await;
-                            }));
-                        }
-                    }
+    /// Load the persisted EQ selection into the manager (applied on connect).
+    async fn restore_eq_selection(&mut self) {
+        let id = config::read(&self.config, |c| c.eq.active_preset.clone());
+        let preset = if id.is_empty() {
+            None
+        } else {
+            match EqPreset::load(&id) {
+                Ok((p, _)) => Some(p),
+                Err(e) => {
+                    warn!("configured EQ preset unavailable: {e}");
+                    None
                 }
             }
+        };
+        let id = preset.as_ref().map(|p| p.id.clone()).unwrap_or_default();
+        self.state.update(|s| s.eq_preset = id);
+        self.eq.select(preset).await;
+    }
 
-            // AAP events from L2CAP reader
-            Some(event) = event_rx.recv() => {
-                match &event {
-                    AapEvent::Battery(_) => {
-                        dbus::emit_properties_changed(&connection, &[
-                            "BatteryLeft", "BatteryRight", "BatteryCase",
-                            "ChargingLeft", "ChargingRight", "ChargingCase",
-                        ]).await;
-                    }
-                    AapEvent::AncMode(_) => {
-                        dbus::emit_properties_changed(&connection, &["AncMode"]).await;
-                    }
-                    AapEvent::EarDetection(_ed) => {
-                        let s = state.current();
-                        dbus::emit_properties_changed(&connection, &["EarLeft", "EarRight"]).await;
-                        dbus::emit_ear_detection_changed(&connection, s.ear_left, s.ear_right).await;
-                    }
-                    AapEvent::ConversationalAwareness(_) => {
-                        dbus::emit_properties_changed(&connection, &["ConversationalAwareness"]).await;
-                    }
-                    AapEvent::ConversationalActivity(_) => {
-                        dbus::emit_properties_changed(&connection, &["ConversationalActivityState"]).await;
-                    }
-                    AapEvent::AdaptiveNoiseLevel(_) => {
-                        dbus::emit_properties_changed(&connection, &["AdaptiveNoiseLevel"]).await;
-                    }
-                    AapEvent::OneBudAnc(_) => {
-                        dbus::emit_properties_changed(&connection, &["OneBudAnc"]).await;
-                    }
-                    AapEvent::VolumeSwipe(_) => {
-                        dbus::emit_properties_changed(&connection, &["VolumeSwipe"]).await;
-                    }
-                    AapEvent::AdaptiveVolume(_) => {
-                        dbus::emit_properties_changed(&connection, &["AdaptiveVolume"]).await;
-                    }
-                    AapEvent::ChimeVolume(_) => {
-                        dbus::emit_properties_changed(&connection, &["ChimeVolume"]).await;
-                    }
-                    AapEvent::AudioSource(_) => {
-                        dbus::emit_properties_changed(&connection, &["AudioSource"]).await;
-                    }
-                    AapEvent::DeviceInfo(info) => {
-                        dbus::emit_properties_changed(&connection, &["Model", "ModelName", "Firmware", "Features"]).await;
-                        dbus::emit_device_connected(&connection, &info.model).await;
-                        dbus::emit_properties_changed(&connection, &["Connected"]).await;
-
-                        // Auto-load EQ preset on connect
-                        if config.eq.auto_load {
-                            let preset_name = &config.eq.active_preset;
-                            if let Some(preset) = eq::EqPreset::load(preset_name) {
-                                if let Err(e) = eq_manager.apply(&preset).await {
-                                    error!("failed to auto-load EQ preset '{preset_name}': {e}");
-                                } else {
-                                    let name = preset.name.clone();
-                                    state.update(|s| s.eq_preset = name);
-                                    dbus::emit_properties_changed(&connection, &["EqPreset"]).await;
-                                }
-                            } else {
-                                warn!("configured EQ preset '{preset_name}' not found");
-                            }
-                        }
-                    }
-                    AapEvent::Disconnected => {
-                        eq_manager.stop().await;
-                        state.reset();
-                        dbus::emit_device_disconnected(&connection).await;
-                        dbus::emit_properties_changed(&connection, &["Connected", "EqPreset"]).await;
-                    }
-                    _ => {}
-                }
+    async fn on_bt_connected(&mut self, addr: Address) {
+        if let Some(pinned) = config::read(&self.config, |c| c.preferred_device())
+            && pinned != addr
+        {
+            info!("ignoring AirPods {addr}: preferred device is {pinned}");
+            return;
+        }
+        match self.bt_device {
+            Some(current) if current == addr => return, // duplicate (e.g. monitor restart)
+            Some(current) => {
+                info!("ignoring AirPods {addr}: already using {current}");
+                return;
             }
+            None => {}
+        }
+        info!("AirPods {addr} connected");
+        self.bt_device = Some(addr);
+        self.last_address = Some(addr);
+        // Connecting again (case opened, bluetoothctl, …) lifts a manual disconnect.
+        self.user_disconnected = false;
+        self.aap_retries = 0;
+        if let Some(r) = self.reconnect.take() {
+            r.abort();
+        }
+        // EQ follows the audio link, not the control session.
+        if config::read(&self.config, |c| c.eq.auto_load) {
+            self.eq.set_device(Some(addr)).await;
+        }
+        if self.session.is_none() {
+            self.start_session(addr).await;
+        }
+    }
 
-            // EQ commands from D-Bus
-            Some(cmd) = eq_rx.recv() => {
-                match cmd {
-                    eq::EqCommand::Apply(preset_name) => {
-                        if let Some(preset) = eq::EqPreset::load(&preset_name) {
-                            if let Err(e) = eq_manager.apply(&preset).await {
-                                error!("failed to apply EQ preset '{preset_name}': {e}");
-                            } else {
-                                let name = preset.name.clone();
-                                state.update(|s| s.eq_preset = name);
-                            }
-                            dbus::emit_properties_changed(&connection, &["EqPreset"]).await;
-                        } else {
-                            warn!("EQ preset '{preset_name}' not found");
-                        }
-                    }
-                    eq::EqCommand::Disable => {
-                        eq_manager.stop().await;
-                        state.update(|s| s.eq_preset.clear());
-                        dbus::emit_properties_changed(&connection, &["EqPreset"]).await;
+    async fn start_session(&mut self, addr: Address) {
+        info!("AirPods {addr} connected, starting AAP session");
+        self.next_session_id += 1;
+        let id = self.next_session_id;
+        let (tx, rx) = mpsc::channel(32);
+        *self.cmd_tx.lock().await = Some(tx);
+
+        let state = self.state.clone();
+        let session_tx = self.session_tx.clone();
+        let handle = tokio::spawn(async move {
+            let (event_tx, mut event_rx) = mpsc::channel::<AapEvent>(64);
+            let forward_tx = session_tx.clone();
+            let forward = tokio::spawn(async move {
+                while let Some(ev) = event_rx.recv().await {
+                    if forward_tx.send(SessionMsg::Event(id, ev)).await.is_err() {
+                        break;
                     }
                 }
+            });
+            match l2cap::run(addr, state, rx, event_tx).await {
+                Ok(()) => info!("AAP session ended"),
+                Err(e) => error!("AAP session error: {e}"),
             }
+            let _ = forward.await;
+            let _ = session_tx.send(SessionMsg::Ended(id)).await;
+        });
+        self.session = Some(ActiveSession {
+            id,
+            address: addr,
+            handle,
+        });
+    }
 
-            // D-Bus manual reconnect request
-            Some(()) = reconnect_rx.recv() => {
-                if let Some(addr) = last_address {
-                    info!("manual reconnect requested for {addr}");
+    /// Tear down the AAP session and publish the disconnected state.
+    async fn end_session(&mut self) {
+        if let Some(s) = self.session.take() {
+            s.handle.abort();
+        }
+        *self.cmd_tx.lock().await = None;
+        self.state.reset();
+    }
 
-                    // Cancel any existing reconnect task
-                    if let Some(handle) = reconnect_handle.take() {
-                        handle.abort();
-                    }
+    async fn on_bt_disconnected(&mut self, addr: Address) {
+        if self.bt_device != Some(addr) {
+            return;
+        }
+        info!("AirPods {addr} disconnected");
+        self.bt_device = None;
+        self.end_session().await;
+        self.eq.set_device(None).await;
+        self.maybe_reconnect(addr);
+    }
 
-                    let max_retries = config.reconnect.max_retries;
-                    reconnect_handle = Some(tokio::spawn(async move {
-                        reconnect_with_backoff(addr, max_retries).await;
-                    }));
-                } else {
-                    warn!("reconnect requested but no known device address");
+    /// The AAP channel closed. If the Bluetooth link is still up (the AirPods
+    /// restarted the channel after a firmware hiccup), retry it a few times.
+    /// If the link went down, `on_bt_disconnected` handles reconnecting.
+    async fn on_session_ended(&mut self) {
+        let Some(addr) = self.session.as_ref().map(|s| s.address) else {
+            return;
+        };
+        self.end_session().await;
+        if self.bt_device != Some(addr) || self.user_disconnected {
+            return;
+        }
+        if self.aap_retries >= 3 {
+            warn!("AAP session keeps failing; not retrying until the AirPods reconnect (see `airpods-cli doctor`)");
+            return;
+        }
+        self.aap_retries += 1;
+        info!("AAP session ended with Bluetooth still up; retrying in 3s");
+        let tx = self.retry_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let _ = tx.send(addr).await;
+        });
+    }
+
+    async fn on_retry(&mut self, addr: Address) {
+        if self.bt_device == Some(addr) && self.session.is_none() && !self.user_disconnected {
+            self.start_session(addr).await;
+        }
+    }
+
+    fn maybe_reconnect(&mut self, addr: Address) {
+        let (enabled, retries) = config::read(&self.config, |c| {
+            (c.reconnect.auto_reconnect, c.reconnect.max_retries)
+        });
+        if !enabled || self.user_disconnected || retries == 0 {
+            return;
+        }
+        if let Some(r) = self.reconnect.take() {
+            r.abort();
+        }
+        self.reconnect = Some(tokio::spawn(reconnect_with_backoff(addr, retries)));
+    }
+
+    async fn on_aap_event(&mut self, event: AapEvent) {
+        if let AapEvent::DeviceInfo(_) = event {
+            self.aap_retries = 0; // handshake fully worked
+        }
+    }
+
+    async fn on_control(&mut self, ctl: Control) {
+        match ctl {
+            Control::Reconnect(reply) => {
+                let Some(addr) = self.last_address else {
+                    let _ = reply.send(Err("no AirPods have connected since the daemon started; use ConnectTo".into()));
+                    return;
+                };
+                self.user_disconnected = false;
+                if let Some(r) = self.reconnect.take() {
+                    r.abort();
                 }
+                let retries = config::read(&self.config, |c| c.reconnect.max_retries).max(1);
+                self.reconnect = Some(tokio::spawn(reconnect_with_backoff(addr, retries)));
+                let _ = reply.send(Ok(()));
             }
-
-            // Graceful shutdown
-            _ = tokio::signal::ctrl_c() => {
-                info!("shutting down");
-                eq_manager.stop().await;
-                if let Some(handle) = reconnect_handle.take() {
-                    handle.abort();
+            Control::Disconnect(reply) => {
+                let Some(addr) = self.bt_device else {
+                    let _ = reply.send(Err("no AirPods connected".into()));
+                    return;
+                };
+                self.user_disconnected = true;
+                if let Some(r) = self.reconnect.take() {
+                    r.abort();
                 }
-                if let Some(handle) = l2cap_handle.take() {
-                    handle.abort();
+                let result = bluez::disconnect_device(addr).await.map_err(|e| {
+                    self.user_disconnected = false;
+                    format!("Bluetooth disconnect failed: {e}")
+                });
+                let _ = reply.send(result);
+            }
+            Control::EqSelect(id, done) => {
+                self.select_eq(id).await;
+                let _ = done.send(());
+            }
+            Control::EqPresetChanged(id, done) => {
+                if self.eq.preset_id() == Some(id.as_str()) {
+                    // Re-read from disk (or fall back to the built-in, or
+                    // disable if the preset no longer exists at all).
+                    let still_exists = EqPreset::load(&id).is_ok();
+                    self.select_eq(still_exists.then_some(id)).await;
                 }
-                break;
+                let _ = done.send(());
             }
         }
     }
 
-    Ok(())
+    async fn select_eq(&mut self, id: Option<String>) {
+        let preset = match id.as_deref().map(EqPreset::load) {
+            None => None,
+            Some(Ok((p, _))) => Some(p),
+            Some(Err(e)) => {
+                warn!("can't select EQ preset: {e}");
+                return;
+            }
+        };
+        let id = preset.as_ref().map(|p| p.id.clone()).unwrap_or_default();
+        if let Err(e) = config::update_config(&self.config, |c| c.eq.active_preset = id.clone()) {
+            warn!("failed to persist EQ selection: {e}");
+        }
+        self.state.update(|s| s.eq_preset = id);
+        // Selecting a preset while connected applies it even if auto-load is off.
+        self.eq.select(preset).await;
+        self.eq.set_device(self.bt_device).await;
+    }
 }
 
 /// Attempt to reconnect to AirPods with exponential backoff
 async fn reconnect_with_backoff(address: Address, max_retries: u32) {
-    let mut delay = std::time::Duration::from_secs(2);
-
+    let mut delay = Duration::from_secs(2);
     for attempt in 1..=max_retries {
-        info!("reconnect attempt {}/{}", attempt, max_retries);
         tokio::time::sleep(delay).await;
-
+        info!("reconnect attempt {attempt}/{max_retries} to {address}");
         match bluez::connect_device(address).await {
             Ok(()) => {
-                info!("reconnect succeeded on attempt {}", attempt);
+                info!("reconnect succeeded on attempt {attempt}");
                 return;
             }
             Err(e) => {
-                warn!("reconnect attempt {} failed: {e}", attempt);
-                delay *= 2; // exponential backoff: 2s, 4s, 8s, ...
+                warn!("reconnect attempt {attempt} failed: {e}");
+                delay = (delay * 2).min(Duration::from_secs(60));
             }
         }
     }
-
-    warn!(
-        "all {} reconnect attempts exhausted for {address}",
-        max_retries
-    );
+    info!("giving up reconnecting to {address} after {max_retries} attempts");
 }

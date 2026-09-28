@@ -3,234 +3,225 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
   <title>AirPods Helper</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="app">
+  <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+    <symbol id="i-airpods" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 3.5a3.5 3.5 0 0 0-3.5 3.6c0 2 1.4 3.4 3 3.4.4 0 .7 0 1-.2V19a1.2 1.2 0 0 0 2.4 0V7.3C9.9 5.2 8.8 3.5 7 3.5ZM17 3.5a3.5 3.5 0 0 1 3.5 3.6c0 2-1.4 3.4-3 3.4-.4 0-.7 0-1-.2V19a1.2 1.2 0 0 1-2.4 0V7.3c0-2.1 1.1-3.8 2.9-3.8Z"/></symbol>
+    <symbol id="i-headphones" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 15v-3a8 8 0 0 1 16 0v3M4 15a2 2 0 0 1 2-2h1v7H6a2 2 0 0 1-2-2v-3Zm16 0a2 2 0 0 0-2-2h-1v7h1a2 2 0 0 0 2-2v-3Z"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path fill="currentColor" d="M13.5 2 5 13.2h5.6L9.8 22 19 10.3h-5.7L13.5 2Z"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 3v8M7.1 6.2a7.5 7.5 0 1 0 9.8 0"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 3.5 2.5 20h19L12 3.5Z"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 10v4.5M12 17.4v.1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path fill="none" stroke="currentColor" stroke-width="1.6" d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+  </svg>
+
+  <div id="app" class="app" aria-busy="true">
     <!-- Header -->
-    <header id="header">
-      <div class="header-top">
-        <div class="device-name" id="device-name">AirPods</div>
-        <div class="connection-badge" id="connection-badge">
-          <span class="status-dot" id="status-dot"></span>
-          <span id="connection-text">Disconnected</span>
-        </div>
+    <header class="header">
+      <svg class="header-icon" aria-hidden="true"><use id="header-glyph" href="#i-airpods"/></svg>
+      <div class="header-text">
+        <h1 id="device-name" class="device-name">AirPods Helper</h1>
+        <p id="device-sub" class="device-sub"></p>
       </div>
-      <div class="header-meta">
-        <span id="device-model" class="meta-item"></span>
-        <span id="device-firmware" class="meta-item"></span>
-      </div>
-      <div class="header-actions" id="header-actions">
-        <button id="btn-disconnect" class="btn-secondary hidden">Disconnect</button>
-      </div>
+      <span id="conn-pill" class="pill" role="status" aria-live="polite">
+        <span class="pill-dot" aria-hidden="true"></span><span id="conn-text">Starting…</span>
+      </span>
+      <button id="btn-disconnect" class="icon-btn" type="button" aria-label="Disconnect AirPods" title="Disconnect" hidden>
+        <svg aria-hidden="true"><use href="#i-power"/></svg>
+      </button>
     </header>
 
-    <!-- Devices (paired list, shown when disconnected) -->
-    <section class="card" id="devices-card">
-      <div class="card-header-row">
-        <h2 class="card-title">Paired AirPods</h2>
-        <button id="btn-refresh-devices" class="btn-icon" title="Refresh list">↻</button>
-      </div>
-      <ul class="device-list" id="device-list"></ul>
-      <p class="device-list-empty hidden" id="device-list-empty">
-        No paired AirPods yet. Open your case (status light flashing white) and tap Quick Pair below, or use <code>bluetoothctl</code>.
-      </p>
+    <main class="content">
+      <!-- Daemon unavailable -->
+      <section id="daemon-card" class="card card-alert" aria-labelledby="daemon-title" hidden>
+        <div class="alert-head">
+          <svg class="alert-icon" aria-hidden="true"><use href="#i-warn"/></svg>
+          <h2 id="daemon-title" class="alert-title">AirPods daemon isn't running</h2>
+        </div>
+        <p class="muted">The app is only a front end: <code>airpods-daemon</code> talks to your AirPods. Start it (and enable it on login) with:</p>
+        <div class="cmd"><code id="cmd-enable">systemctl --user enable --now airpods-daemon.service</code><button class="icon-btn small" type="button" data-copy="cmd-enable" aria-label="Copy command"><svg aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+        <p class="muted">If it still won't start, run the built-in checks:</p>
+        <div class="cmd"><code id="cmd-doctor">airpods-cli doctor</code><button class="icon-btn small" type="button" data-copy="cmd-doctor" aria-label="Copy command"><svg aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+        <p id="daemon-error" class="error-detail" hidden></p>
+        <div class="row-end">
+          <button id="btn-retry" class="btn btn-primary" type="button">Try again</button>
+        </div>
+      </section>
 
-      <div class="quickpair">
-        <div class="quickpair-header">
-          <div class="quickpair-label">Quick Pair</div>
-          <button id="btn-quickpair" class="btn-primary">Scan</button>
-        </div>
-        <div class="quickpair-hint" id="quickpair-hint">
-          Open the case near this machine — we'll find AirPods in pairing mode.
-        </div>
-        <ul class="candidate-list hidden" id="candidate-list"></ul>
+      <div id="outdated-banner" class="banner" role="note" hidden>
+        <svg aria-hidden="true"><use href="#i-warn"/></svg>
+        <span>Your <code>airpods-daemon</code> is older than this app — some controls won't work until you update airpods-helper.</span>
       </div>
 
-      <div class="pair-form">
-        <div class="pair-form-label">Pair by MAC</div>
-        <div class="pair-form-row">
-          <input
-            type="text"
-            id="pair-mac"
-            class="pair-input"
-            placeholder="AA:BB:CC:DD:EE:FF"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <button id="btn-pair" class="btn-primary">Pair</button>
+      <!-- Devices (disconnected) -->
+      <section id="devices-card" class="card" aria-labelledby="devices-title" hidden>
+        <div class="card-head">
+          <h2 id="devices-title" class="card-title">Paired AirPods</h2>
+          <button id="btn-refresh" class="icon-btn small" type="button" aria-label="Refresh paired devices" title="Refresh">
+            <svg aria-hidden="true"><use href="#i-refresh"/></svg>
+          </button>
         </div>
-        <div class="pair-form-hint" id="pair-hint">
-          Open the AirPods case before clicking Pair.
-        </div>
-      </div>
-    </section>
+        <ul id="device-list" class="list" aria-live="polite"></ul>
+        <p id="device-empty" class="hint" hidden>No paired AirPods yet. Put them in pairing mode (case open, hold the button until the light flashes white), then scan below.</p>
 
-    <!-- Battery -->
-    <section class="card" id="battery-section">
-      <h2 class="card-title">Battery</h2>
-      <div class="battery-grid">
-        <div class="battery-item">
-          <div class="battery-label">Left</div>
-          <div class="battery-bar-container">
-            <div class="battery-bar" id="battery-left-bar"></div>
+        <div class="subsection">
+          <div class="row-between">
+            <h3 class="sub-title" id="qp-title">Pair new AirPods</h3>
+            <button id="btn-scan" class="btn btn-quiet" type="button">Scan</button>
           </div>
-          <div class="battery-pct" id="battery-left-pct">--</div>
-          <div class="battery-charging" id="battery-left-charging"></div>
+          <p id="qp-hint" class="hint" aria-live="polite">Open the case nearby and hold the setup button until the light flashes white.</p>
+          <ul id="qp-list" class="list" aria-labelledby="qp-title"></ul>
+          <form id="pair-form" class="inline-form" novalidate>
+            <label for="pair-mac" class="sr-only">MAC address to pair</label>
+            <input id="pair-mac" type="text" placeholder="Pair by MAC — AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" inputmode="text">
+            <button id="btn-pair" class="btn" type="submit">Pair</button>
+          </form>
         </div>
-        <div class="battery-item">
-          <div class="battery-label">Right</div>
-          <div class="battery-bar-container">
-            <div class="battery-bar" id="battery-right-bar"></div>
+      </section>
+
+      <!-- Battery + ear detection -->
+      <section id="battery-card" class="card" aria-labelledby="battery-title" hidden>
+        <h2 id="battery-title" class="card-title">Battery</h2>
+        <div id="battery-grid" class="battery-grid"></div>
+      </section>
+
+      <!-- Listening mode -->
+      <section id="anc-card" class="card" aria-labelledby="anc-title" hidden>
+        <h2 id="anc-title" class="card-title">Listening mode</h2>
+        <div id="anc-group" class="segmented" role="radiogroup" aria-labelledby="anc-title"></div>
+        <div id="adaptive-row" class="slider-row" hidden>
+          <label for="adaptive-slider" class="slider-label">Adaptive level</label>
+          <input id="adaptive-slider" type="range" min="0" max="100" step="1" value="50">
+          <output id="adaptive-value" for="adaptive-slider" class="slider-value">50</output>
+        </div>
+        <p id="adaptive-hint" class="hint" hidden>Lower lets more of your surroundings in; higher blocks more noise.</p>
+      </section>
+
+      <!-- Equalizer -->
+      <section id="eq-card" class="card" aria-labelledby="eq-title" hidden>
+        <div class="card-head">
+          <h2 id="eq-title" class="card-title">Equalizer</h2>
+          <span id="eq-badge" class="badge">Off</span>
+        </div>
+        <div id="eq-chips" class="chips" role="radiogroup" aria-labelledby="eq-title"></div>
+        <p id="eq-message" class="eq-message" role="status" hidden></p>
+        <figure class="eq-graph">
+          <svg id="eq-curve" viewBox="0 0 360 132" preserveAspectRatio="none" role="img" aria-label="Frequency response"></svg>
+          <figcaption id="eq-caption" class="eq-caption"></figcaption>
+        </figure>
+        <div id="eq-actions" class="row-between">
+          <span id="eq-desc" class="hint"></span>
+          <span class="btn-row">
+            <button id="eq-edit" class="btn btn-quiet" type="button">Edit</button>
+            <button id="eq-new" class="btn btn-quiet" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>New</button>
+          </span>
+        </div>
+
+        <!-- Preset editor -->
+        <form id="eq-editor" class="editor" hidden novalidate aria-label="Preset editor">
+          <div class="editor-grid">
+            <label class="field field-wide">
+              <span>Name</span>
+              <input id="ed-name" type="text" maxlength="64" required autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span>Preamp (dB)</span>
+              <input id="ed-preamp" type="number" min="-24" max="12" step="0.5" required>
+            </label>
+            <label class="field field-full">
+              <span>Description</span>
+              <input id="ed-desc" type="text" maxlength="200" autocomplete="off">
+            </label>
+            <p class="field-full hint">Saved as <code id="ed-id"></code></p>
           </div>
-          <div class="battery-pct" id="battery-right-pct">--</div>
-          <div class="battery-charging" id="battery-right-charging"></div>
-        </div>
-        <div class="battery-item">
-          <div class="battery-label">Case</div>
-          <div class="battery-bar-container">
-            <div class="battery-bar" id="battery-case-bar"></div>
+          <div class="bands" role="table" aria-label="Filter bands">
+            <div class="band band-head" role="row">
+              <span role="columnheader">Type</span>
+              <span role="columnheader">Freq (Hz)</span>
+              <span role="columnheader">Q</span>
+              <span role="columnheader">Gain (dB)</span>
+              <span role="columnheader"><span class="sr-only">Remove</span></span>
+            </div>
+            <div id="ed-bands"></div>
           </div>
-          <div class="battery-pct" id="battery-case-pct">--</div>
-          <div class="battery-charging" id="battery-case-charging"></div>
+          <button id="ed-add" class="btn btn-quiet" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Add band</button>
+          <p id="ed-error" class="field-error" role="alert" hidden></p>
+          <div class="row-between editor-foot">
+            <button id="ed-delete" class="btn btn-danger" type="button">Delete</button>
+            <span class="btn-row">
+              <button id="ed-cancel" class="btn" type="button">Cancel</button>
+              <button id="ed-save" class="btn btn-primary" type="submit">Save</button>
+            </span>
+          </div>
+        </form>
+      </section>
+
+      <!-- Controls -->
+      <section id="features-card" class="card" aria-labelledby="features-title" hidden>
+        <h2 id="features-title" class="card-title">Controls</h2>
+        <div id="row-ca" class="toggle-row">
+          <label for="t-ca"><span class="toggle-name">Conversation Awareness</span><span class="toggle-desc">Lowers media and noise control when you speak</span></label>
+          <input id="t-ca" class="switch" type="checkbox" role="switch">
         </div>
-      </div>
-    </section>
-
-    <!-- ANC Mode -->
-    <section class="card">
-      <h2 class="card-title">Active Noise Control</h2>
-      <div class="anc-buttons">
-        <button class="anc-btn" data-mode="noise">Noise Cancel</button>
-        <button class="anc-btn" data-mode="transparency">Transparency</button>
-        <button class="anc-btn" data-mode="adaptive">Adaptive</button>
-      </div>
-      <div class="slider-row" id="adaptive-noise-row">
-        <label class="slider-label">Adaptive Level</label>
-        <input type="range" class="slider" id="adaptive-noise-slider" min="0" max="100" value="50">
-        <span class="slider-value" id="adaptive-noise-value">50</span>
-      </div>
-    </section>
-
-    <!-- Microphone -->
-    <section class="card" id="mic-card">
-      <h2 class="card-title">Microphone</h2>
-      <div class="anc-buttons">
-        <button class="mic-btn" data-mic="auto">Auto</button>
-        <button class="mic-btn" data-mic="right">Right</button>
-        <button class="mic-btn" data-mic="left">Left</button>
-      </div>
-    </section>
-
-    <!-- Features -->
-    <section class="card">
-      <h2 class="card-title">Features</h2>
-      <div class="toggle-row">
-        <span class="toggle-label">Conversational Awareness</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-ca">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="toggle-row">
-        <span class="toggle-label">One-Bud ANC</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-one-bud" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="toggle-row">
-        <span class="toggle-label">Volume Swipe</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-volume-swipe" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    </section>
-
-    <!-- EQ — disabled for BT audio, PipeWire restart kills connection -->
-    <!--
-    <section class="card">
-      <h2 class="card-title">EQ Preset</h2>
-      <div class="eq-buttons">
-        <button class="eq-btn" data-preset="flat">Flat</button>
-        <button class="eq-btn" data-preset="bass-boost">Bass Boost</button>
-        <button class="eq-btn" data-preset="vocal-clarity">Vocal Clarity</button>
-        <button class="eq-btn" data-preset="crinacle">Crinacle</button>
-      </div>
-    </section>
-    -->
-
-    <!-- Ear Status -->
-    <section class="card">
-      <h2 class="card-title">Ear Detection</h2>
-      <div class="ear-status">
-        <div class="ear-indicator" id="ear-left">
-          <div class="ear-dot" id="ear-left-dot"></div>
-          <span>Left</span>
+        <div id="row-onebud" class="toggle-row">
+          <label for="t-onebud"><span class="toggle-name">Noise control with one AirPod</span><span class="toggle-desc">Allow ANC/Transparency with a single bud in</span></label>
+          <input id="t-onebud" class="switch" type="checkbox" role="switch">
         </div>
-        <div class="ear-indicator" id="ear-right">
-          <div class="ear-dot" id="ear-right-dot"></div>
-          <span>Right</span>
+        <div id="row-swipe" class="toggle-row">
+          <label for="t-swipe"><span class="toggle-name">Volume swipe</span><span class="toggle-desc">Swipe the stem to change volume</span></label>
+          <input id="t-swipe" class="switch" type="checkbox" role="switch">
         </div>
-      </div>
-    </section>
+        <div id="row-mic" class="control-row">
+          <span id="mic-title" class="toggle-name">Microphone</span>
+          <div id="mic-group" class="segmented small" role="radiogroup" aria-labelledby="mic-title"></div>
+        </div>
+      </section>
 
-    <!-- Settings -->
-    <section class="card">
-      <h2 class="card-title">Settings</h2>
-
-      <div class="settings-group-label">App behavior</div>
-      <div class="toggle-row">
-        <span class="toggle-label">Auto-Reconnect</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-auto-reconnect" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="toggle-row">
-        <span class="toggle-label">Start on Login</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-start-login">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <div class="settings-group-label">Ear detection</div>
-      <div class="toggle-row">
-        <span class="toggle-label">Pause media when a bud is removed</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-ear-pause" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="toggle-row">
-        <span class="toggle-label">Resume when both buds inserted</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-ear-resume" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <div class="settings-group-label">Preferred device</div>
-      <div class="pair-form-row">
-        <input
-          type="text"
-          id="preferred-mac"
-          class="pair-input"
-          placeholder="(none) — pin a MAC to prefer one device"
-          autocomplete="off"
-          spellcheck="false"
-        >
-        <button id="btn-clear-preferred" class="btn-secondary">Clear</button>
-      </div>
-      <div class="pair-form-hint" id="preferred-hint">
-        When set, the daemon connects to this MAC over any other paired AirPods.
-      </div>
-    </section>
+      <!-- Settings -->
+      <details id="settings-card" class="card settings" hidden>
+        <summary class="card-title">Settings</summary>
+        <div class="toggle-row">
+          <label for="s-pause"><span class="toggle-name">Pause when an AirPod is removed</span></label>
+          <input id="s-pause" class="switch" type="checkbox" role="switch" data-setting="pause_on_removal">
+        </div>
+        <div class="toggle-row">
+          <label for="s-resume"><span class="toggle-name">Resume when it goes back in</span></label>
+          <input id="s-resume" class="switch" type="checkbox" role="switch" data-setting="resume_on_insert">
+        </div>
+        <div class="toggle-row">
+          <label for="s-reconnect"><span class="toggle-name">Reconnect automatically</span></label>
+          <input id="s-reconnect" class="switch" type="checkbox" role="switch" data-setting="auto_reconnect">
+        </div>
+        <div class="toggle-row">
+          <label for="s-eqauto"><span class="toggle-name">Apply EQ when AirPods connect</span></label>
+          <input id="s-eqauto" class="switch" type="checkbox" role="switch" data-setting="eq_auto_load">
+        </div>
+        <div class="toggle-row">
+          <label for="s-login"><span class="toggle-name">Open at login</span><span class="toggle-desc">Starts minimized to the tray</span></label>
+          <input id="s-login" class="switch" type="checkbox" role="switch">
+        </div>
+        <div class="field-block">
+          <label for="s-preferred" class="toggle-name">Preferred AirPods</label>
+          <form id="preferred-form" class="inline-form" novalidate>
+            <input id="s-preferred" type="text" list="paired-options" placeholder="Any paired AirPods" autocomplete="off" spellcheck="false" aria-describedby="preferred-hint">
+            <datalist id="paired-options"></datalist>
+            <button id="btn-preferred-clear" class="btn" type="button">Clear</button>
+          </form>
+          <p id="preferred-hint" class="hint">When set, other AirPods are ignored.</p>
+        </div>
+        <p id="versions" class="footer-note"></p>
+      </details>
+    </main>
   </div>
 
+  <div id="toasts" class="toasts" aria-live="assertive" aria-atomic="false"></div>
+
+  <script src="eq.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

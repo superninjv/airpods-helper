@@ -11,8 +11,6 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::aap;
-
 // Re-export the Uuid type used by btleplug
 use btleplug::api::BDAddr;
 
@@ -82,7 +80,10 @@ pub async fn scan_for_airpods(adapter: &Adapter, timeout: Duration) -> Result<Di
             let peripherals = adapter.peripherals().await?;
             for p in peripherals {
                 if let Some(device) = check_peripheral(&p, airpods_uuid).await {
-                    info!("found AirPods in known devices: {:?} at {}", device.name, device.address);
+                    info!(
+                        "found AirPods in known devices: {:?} at {}",
+                        device.name, device.address
+                    );
                     return Ok(device);
                 }
             }
@@ -116,7 +117,10 @@ async fn check_peripheral(peripheral: &Peripheral, airpods_uuid: Uuid) -> Option
         if let Some(ref name) = props.local_name {
             let lower = name.to_lowercase();
             if lower.contains("airpods") || lower.contains("airpod") {
-                debug!("matched AirPods by name + Apple mfr data: {name} ({})", props.address);
+                debug!(
+                    "matched AirPods by name + Apple mfr data: {name} ({})",
+                    props.address
+                );
                 return Some(DiscoveredDevice {
                     address: props.address,
                     name: Some(name.clone()),

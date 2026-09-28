@@ -1,3 +1,6 @@
 [D-BUS Service]
 Name=org.costa.AirPods
 Exec=%h/.local/bin/airpods-daemon
+# Start through systemd so bus activation and `systemctl --user` share one
+# instance (and its cgroup cleanup).
+SystemdService=airpods-daemon.service

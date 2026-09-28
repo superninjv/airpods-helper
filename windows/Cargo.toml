@@ -1,6 +1,6 @@
 [package]
 name = "airpods-windows"
-version = "0.3.0-rc.1"
+version = "0.3.0"
 edition = "2024"
 
 [[bin]]
@@ -8,6 +8,7 @@ name = "airpods-windows"
 path = "src/main.rs"
 
 [dependencies]
+aap = { path = "../aap" }
 tokio = { version = "1", features = ["full"] }
 btleplug = "0.11"
 clap = { version = "4", features = ["derive"] }
