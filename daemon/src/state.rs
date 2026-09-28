@@ -4,9 +4,11 @@ use tokio::sync::watch;
 use crate::aap::AncMode;
 
 /// Shared AirPods state, updated by the L2CAP reader and consumed by D-Bus
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AirPodsState {
     pub connected: bool,
+    /// MAC of the connected AirPods ("" when disconnected)
+    pub address: String,
     pub battery_left: i32,
     pub battery_right: i32,
     pub battery_case: i32,
@@ -26,15 +28,21 @@ pub struct AirPodsState {
     pub model: String,
     pub model_name: String,
     pub firmware: String,
-    pub eq_preset: String,
+    pub mic_mode: String,
     pub conversational_activity: String,
     pub features: Vec<String>,
+    // EQ — owned by the EQ manager, survives device resets
+    pub eq_preset: String,
+    pub eq_status: String,
+    pub eq_error: String,
+    pub eq_backend: String,
 }
 
 impl Default for AirPodsState {
     fn default() -> Self {
         Self {
             connected: false,
+            address: String::new(),
             battery_left: -1,
             battery_right: -1,
             battery_case: -1,
@@ -54,9 +62,13 @@ impl Default for AirPodsState {
             model: String::new(),
             model_name: String::new(),
             firmware: String::new(),
-            eq_preset: String::new(),
+            mic_mode: "auto".to_string(),
             conversational_activity: "normal".to_string(),
             features: Vec::new(),
+            eq_preset: String::new(),
+            eq_status: "off".to_string(),
+            eq_error: String::new(),
+            eq_backend: "none".to_string(),
         }
     }
 }
@@ -86,15 +98,34 @@ impl StateManager {
         self.tx.send_modify(f);
     }
 
+    /// Update state; `f` returns whether anything changed, and watchers are
+    /// only notified if it did.
+    pub fn update_if_changed<F>(&self, f: F)
+    where
+        F: FnOnce(&mut AirPodsState) -> bool,
+    {
+        self.tx.send_if_modified(f);
+    }
+
     /// Get current state snapshot
     pub fn current(&self) -> AirPodsState {
         self.rx.borrow().clone()
     }
 
-    /// Reset to disconnected defaults
+    /// Reset device state to disconnected defaults. EQ fields are kept: they
+    /// describe the user's selection and the audio backend, not the device.
     pub fn reset(&self) {
-        self.tx.send_modify(|state| {
-            *state = AirPodsState::default();
+        self.tx.send_if_modified(|state| {
+            let fresh = AirPodsState {
+                eq_preset: state.eq_preset.clone(),
+                eq_status: state.eq_status.clone(),
+                eq_error: state.eq_error.clone(),
+                eq_backend: state.eq_backend.clone(),
+                ..AirPodsState::default()
+            };
+            let changed = *state != fresh;
+            *state = fresh;
+            changed
         });
     }
 }
