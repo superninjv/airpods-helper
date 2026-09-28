@@ -1,11 +1,21 @@
 use tokio::sync::watch;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use zbus::Connection;
 
+use crate::config::{self, SharedConfig};
 use crate::state::AirPodsState;
 
-/// Watch ear detection state and pause/resume MPRIS media players
-pub async fn watch_ear_detection(mut state_rx: watch::Receiver<AirPodsState>) {
+fn buds_in_ear(state: &AirPodsState) -> u8 {
+    state.ear_left as u8 + state.ear_right as u8
+}
+
+/// Watch ear detection and pause/resume MPRIS players, like iOS does:
+/// taking a bud out pauses; putting it back resumes — but only a player we
+/// paused ourselves, so we never start media the user stopped on purpose.
+pub async fn watch_ear_detection(
+    mut state_rx: watch::Receiver<AirPodsState>,
+    config: SharedConfig,
+) {
     let conn = match Connection::session().await {
         Ok(c) => c,
         Err(e) => {
@@ -14,40 +24,49 @@ pub async fn watch_ear_detection(mut state_rx: watch::Receiver<AirPodsState>) {
         }
     };
 
-    let mut was_in_ear = false;
-    let mut paused_player: Option<String> = None;
+    // None until we've seen the first ear report of this connection, so the
+    // initial "0 → N buds" isn't mistaken for an insertion.
+    let mut in_ear: Option<u8> = None;
+    // (player, number of buds that were in when we paused)
+    let mut paused: Option<(String, u8)> = None;
 
-    loop {
-        if state_rx.changed().await.is_err() {
-            break;
-        }
-
+    while state_rx.changed().await.is_ok() {
         let state = state_rx.borrow_and_update().clone();
-
         if !state.connected {
-            was_in_ear = false;
-            paused_player = None;
+            in_ear = None;
+            paused = None;
             continue;
         }
+        let now = buds_in_ear(&state);
+        let Some(before) = in_ear.replace(now) else {
+            continue;
+        };
+        if now == before {
+            continue;
+        }
+        let (pause, resume) = config::read(&config, |c| {
+            (c.ear_detection.pause_media, c.ear_detection.resume_media)
+        });
 
-        let in_ear = state.ear_left || state.ear_right;
-
-        // Transition: was in ear -> no longer in ear = pause
-        if was_in_ear && !in_ear
-            && let Some(player) = find_playing_player(&conn).await {
-                info!("ear detection: pausing {player}");
-                let _ = call_mpris(&conn, &player, "Pause").await;
-                paused_player = Some(player);
+        if now < before {
+            if pause
+                && paused.is_none()
+                && let Some(player) = find_playing_player(&conn).await
+            {
+                info!("ear detection: bud removed, pausing {player}");
+                if call_mpris(&conn, &player, "Pause").await.is_ok() {
+                    paused = Some((player, before));
+                }
             }
-
-        // Transition: was not in ear -> now in ear = resume
-        if !was_in_ear && in_ear
-            && let Some(player) = paused_player.take() {
-                info!("ear detection: resuming {player}");
-                let _ = call_mpris(&conn, &player, "Play").await;
+        } else if let Some((player, wanted)) = &paused
+            && now >= *wanted
+        {
+            if resume {
+                info!("ear detection: bud back in, resuming {player}");
+                let _ = call_mpris(&conn, player, "Play").await;
             }
-
-        was_in_ear = in_ear;
+            paused = None;
+        }
     }
 }
 
@@ -61,21 +80,25 @@ async fn find_playing_player(conn: &Connection) -> Option<String> {
         if !name_str.starts_with("org.mpris.MediaPlayer2.") {
             continue;
         }
-
-        // Check playback status
-        let player_proxy = zbus::Proxy::new(
+        let player_proxy = match zbus::Proxy::new(
             conn,
             name_str,
             "/org/mpris/MediaPlayer2",
             "org.mpris.MediaPlayer2.Player",
         )
         .await
-        .ok()?;
-
-        if let Ok(status) = player_proxy.get_property::<String>("PlaybackStatus").await
-            && status == "Playing" {
-                return Some(name_str.to_string());
+        {
+            Ok(p) => p,
+            Err(e) => {
+                debug!("skipping MPRIS player {name_str}: {e}");
+                continue;
             }
+        };
+        if let Ok(status) = player_proxy.get_property::<String>("PlaybackStatus").await
+            && status == "Playing"
+        {
+            return Some(name_str.to_string());
+        }
     }
 
     None
@@ -90,7 +113,6 @@ async fn call_mpris(conn: &Connection, player: &str, method: &str) -> zbus::Resu
         "org.mpris.MediaPlayer2.Player",
     )
     .await?;
-
     proxy.call_noreply(method, &()).await?;
     Ok(())
 }

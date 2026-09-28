@@ -2,8 +2,7 @@ use super::*;
 
 /// Handshake packet — must be sent first after L2CAP connection
 pub const HANDSHAKE: [u8; 16] = [
-    0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00,
+    0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 /// Host capabilities packet (opcode 0x004D).
@@ -18,9 +17,8 @@ pub const SET_FEATURES: [u8; 14] = [
 ];
 
 /// Subscribe to all notification types (battery, ear detection, ANC, etc.)
-pub const SUBSCRIBE_NOTIFICATIONS: [u8; 10] = [
-    0x04, 0x00, 0x04, 0x00, 0x0F, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
-];
+pub const SUBSCRIBE_NOTIFICATIONS: [u8; 10] =
+    [0x04, 0x00, 0x04, 0x00, 0x0F, 0x00, 0xFF, 0xFF, 0xFF, 0xFF];
 
 /// Build a control command packet
 /// Format: 04 00 04 00 09 00 [sub_cmd] [value] 00 00 00
@@ -63,6 +61,11 @@ pub fn set_one_bud_anc(enabled: bool) -> [u8; 11] {
     control_command(SUB_ONE_BUD_ANC, if enabled { 0x01 } else { 0x02 })
 }
 
+/// Enable or disable volume adjustment by swiping the stem
+pub fn set_volume_swipe(enabled: bool) -> [u8; 11] {
+    control_command(SUB_VOLUME_SWIPE, if enabled { 0x01 } else { 0x02 })
+}
+
 /// Set which bud is the primary microphone (auto/right/left).
 pub fn set_mic_mode(mode: MicMode) -> [u8; 11] {
     control_command(SUB_MIC_MODE, mode as u8)
@@ -78,9 +81,17 @@ pub fn set_listening_mode_configs(modes: u8) -> [u8; 11] {
 
 /// Enable all listening modes (Off + Noise + Transparency + Adaptive)
 pub const ENABLE_ALL_LISTENING_MODES: [u8; 11] = [
-    HEADER[0], HEADER[1], HEADER[2], HEADER[3],
-    CMD_CONTROL, 0x00,
-    0x1A, 0x0F, 0x00, 0x00, 0x00,
+    HEADER[0],
+    HEADER[1],
+    HEADER[2],
+    HEADER[3],
+    CMD_CONTROL,
+    0x00,
+    0x1A,
+    0x0F,
+    0x00,
+    0x00,
+    0x00,
 ];
 
 #[cfg(test)]
@@ -98,7 +109,9 @@ mod tests {
         let pkt = set_anc_mode(AncMode::NoiseCancellation);
         assert_eq!(
             pkt,
-            [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x0D, 0x02, 0x00, 0x00, 0x00]
+            [
+                0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x0D, 0x02, 0x00, 0x00, 0x00
+            ]
         );
 
         let pkt = set_anc_mode(AncMode::Transparency);

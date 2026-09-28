@@ -1,5 +1,9 @@
-use bluer::{AdapterEvent, Address, Device, Session};
+use bluer::{
+    Adapter, AdapterEvent, AdapterProperty, Address, Device, DeviceEvent, DeviceProperty, Session,
+    SessionEvent,
+};
 use futures::StreamExt;
+use futures::stream::SelectAll;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -11,10 +15,19 @@ pub enum BlueZEvent {
     AirPodsDisconnected(Address),
 }
 
-/// Monitor BlueZ D-Bus for AirPods connect/disconnect events.
-/// Retries connecting to BlueZ with backoff if it's not ready yet (boot race).
+type DeviceEvents = std::pin::Pin<Box<dyn futures::Stream<Item = (Address, DeviceEvent)> + Send>>;
+
+/// Monitor BlueZ for AirPods connect/disconnect events.
+///
+/// This deliberately does NOT start device discovery: continuous inquiry
+/// scanning steals radio time and makes A2DP audio stutter. Instead we watch
+/// the `Connected` property of every known device, and pick up devices BlueZ
+/// adds later (e.g. after pairing).
+///
+/// Returns when the adapter goes away so the caller can restart against
+/// whatever adapter is current.
 pub async fn monitor(tx: mpsc::Sender<BlueZEvent>) -> bluer::Result<()> {
-    let (_session, adapter) = {
+    let (session, adapter) = {
         let mut delay = std::time::Duration::from_secs(1);
         let max_delay = std::time::Duration::from_secs(30);
         loop {
@@ -22,11 +35,17 @@ pub async fn monitor(tx: mpsc::Sender<BlueZEvent>) -> bluer::Result<()> {
                 Ok(session) => match session.default_adapter().await {
                     Ok(adapter) => break (session, adapter),
                     Err(e) => {
-                        warn!("BlueZ adapter not ready, retrying in {}s: {e}", delay.as_secs());
+                        warn!(
+                            "BlueZ adapter not ready, retrying in {}s: {e}",
+                            delay.as_secs()
+                        );
                     }
                 },
                 Err(e) => {
-                    warn!("BlueZ session not ready, retrying in {}s: {e}", delay.as_secs());
+                    warn!(
+                        "BlueZ session not ready, retrying in {}s: {e}",
+                        delay.as_secs()
+                    );
                 }
             }
             tokio::time::sleep(delay).await;
@@ -35,50 +54,100 @@ pub async fn monitor(tx: mpsc::Sender<BlueZEvent>) -> bluer::Result<()> {
     };
     info!("monitoring BlueZ adapter: {}", adapter.name());
 
-    let mut known_connected: HashSet<Address> = HashSet::new();
+    let mut adapter_events = Box::pin(adapter.events().await?);
+    let mut session_events = Box::pin(session.events().await?);
+    let mut device_events: SelectAll<DeviceEvents> = SelectAll::new();
+    // Keeps SelectAll from completing while no devices are watched.
+    device_events.push(Box::pin(futures::stream::pending()));
+    let mut watched: HashSet<Address> = HashSet::new();
+    let mut connected: HashSet<Address> = HashSet::new();
 
-    // Check already-connected devices on startup
-    let addrs = adapter.device_addresses().await?;
-    for addr in addrs {
-        if let Ok(device) = adapter.device(addr)
-            && device.is_connected().await.unwrap_or(false) && is_airpods(&device).await {
-                info!("found already-connected AirPods: {addr}");
-                known_connected.insert(addr);
-                let _ = tx.send(BlueZEvent::AirPodsConnected(addr)).await;
+    async fn watch(
+        adapter: &Adapter,
+        addr: Address,
+        watched: &mut HashSet<Address>,
+        streams: &mut SelectAll<DeviceEvents>,
+    ) -> Option<Device> {
+        let device = adapter.device(addr).ok()?;
+        if watched.insert(addr) {
+            match device.events().await {
+                Ok(ev) => streams.push(Box::pin(ev.map(move |e| (addr, e)))),
+                Err(e) => warn!("can't watch device {addr}: {e}"),
             }
+        }
+        Some(device)
     }
 
-    // Watch for device events (DeviceAdded fires on property changes too with discover_devices_with_changes)
-    let mut events = adapter.discover_devices_with_changes().await?;
-
-    while let Some(event) = events.next().await {
-        match event {
-            AdapterEvent::DeviceAdded(addr) => {
-                if let Ok(device) = adapter.device(addr) {
-                    let connected = device.is_connected().await.unwrap_or(false);
-                    let was_known = known_connected.contains(&addr);
-
-                    if connected && !was_known && is_airpods(&device).await {
-                        info!("AirPods connected: {addr}");
-                        known_connected.insert(addr);
-                        let _ = tx.send(BlueZEvent::AirPodsConnected(addr)).await;
-                    } else if !connected && was_known {
-                        info!("AirPods disconnected: {addr}");
-                        known_connected.remove(&addr);
-                        let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
-                    }
-                }
-            }
-            AdapterEvent::DeviceRemoved(addr) => {
-                if known_connected.remove(&addr) {
-                    info!("AirPods removed: {addr}");
-                    let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
-                }
-            }
-            _ => {}
+    async fn check(
+        device: &Device,
+        connected: &mut HashSet<Address>,
+        tx: &mpsc::Sender<BlueZEvent>,
+    ) {
+        let addr = device.address();
+        let is_connected = device.is_connected().await.unwrap_or(false);
+        if is_connected && !connected.contains(&addr) && is_airpods(device).await {
+            info!("AirPods connected: {addr}");
+            connected.insert(addr);
+            let _ = tx.send(BlueZEvent::AirPodsConnected(addr)).await;
+        } else if !is_connected && connected.remove(&addr) {
+            info!("AirPods disconnected: {addr}");
+            let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
         }
     }
 
+    for addr in adapter.device_addresses().await? {
+        if let Some(device) = watch(&adapter, addr, &mut watched, &mut device_events).await {
+            check(&device, &mut connected, &tx).await;
+        }
+    }
+
+    loop {
+        tokio::select! {
+            event = adapter_events.next() => match event {
+                Some(AdapterEvent::DeviceAdded(addr)) => {
+                    if let Some(device) = watch(&adapter, addr, &mut watched, &mut device_events).await {
+                        check(&device, &mut connected, &tx).await;
+                    }
+                }
+                Some(AdapterEvent::DeviceRemoved(addr)) => {
+                    watched.remove(&addr);
+                    if connected.remove(&addr) {
+                        info!("AirPods removed: {addr}");
+                        let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
+                    }
+                }
+                Some(AdapterEvent::PropertyChanged(AdapterProperty::Powered(false))) => {
+                    info!("Bluetooth adapter powered off");
+                    for addr in connected.drain() {
+                        let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
+                    }
+                }
+                Some(_) => {}
+                None => break,
+            },
+            Some((addr, DeviceEvent::PropertyChanged(prop))) = device_events.next() => {
+                // Connected flips on connect/disconnect; UUIDs can resolve
+                // after Connected=true on a first connection.
+                if matches!(prop, DeviceProperty::Connected(_) | DeviceProperty::Uuids(_))
+                    && let Ok(device) = adapter.device(addr)
+                {
+                    check(&device, &mut connected, &tx).await;
+                }
+            }
+            event = session_events.next() => match event {
+                Some(SessionEvent::AdapterRemoved(name)) if name == adapter.name() => {
+                    warn!("Bluetooth adapter {name} removed");
+                    break;
+                }
+                Some(_) => {}
+                None => break,
+            },
+        }
+    }
+
+    for addr in connected.drain() {
+        let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
+    }
     Ok(())
 }
 
@@ -123,21 +192,24 @@ pub async fn pair_and_trust(address: Address) -> bluer::Result<()> {
     adapter.set_powered(true).await?;
     let _ = adapter.set_pairable(true).await;
 
-    // Start discovery if the device isn't already known. Holding the stream
-    // alive keeps discovery active; dropping it stops discovery.
-    let mut _discovery_stream = None;
-    let known = adapter.device_addresses().await.unwrap_or_default();
-    if !known.contains(&address) {
-        info!("device {address} unknown, starting discovery");
-        _discovery_stream = Some(adapter.discover_devices().await?);
+    if let Ok(device) = adapter.device(address)
+        && device.is_paired().await.unwrap_or(false)
+    {
+        info!("{address} is already paired; marking trusted");
+        device.set_trusted(true).await?;
+        return Ok(());
+    }
 
+    // Always scan until the device is actually advertising: a cached entry
+    // from an earlier session may be stale, and pairing a device that isn't
+    // in range fails with an opaque page timeout.
+    {
+        info!("scanning for {address}");
+        let _discovery = adapter.discover_devices().await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         loop {
-            if adapter
-                .device_addresses()
-                .await
-                .unwrap_or_default()
-                .contains(&address)
+            if let Ok(device) = adapter.device(address)
+                && device.rssi().await.ok().flatten().is_some()
             {
                 break;
             }
@@ -145,12 +217,14 @@ pub async fn pair_and_trust(address: Address) -> bluer::Result<()> {
                 return Err(bluer::Error {
                     kind: bluer::ErrorKind::NotFound,
                     message: format!(
-                        "device {address} not seen within 20s — make sure AirPods are in pairing mode (case open, status light flashing white)"
+                        "device {address} not seen within 20s — make sure AirPods are in pairing mode (case open, hold the button until the light flashes white)"
                     ),
                 });
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        // Discovery is stopped here (dropped) — pairing while inquiry
+        // scanning is running is slower and less reliable.
     }
 
     let device = adapter.device(address)?;
@@ -196,34 +270,30 @@ pub struct QuickPairCandidate {
     pub in_pair_mode: bool,
 }
 
-/// Map known Apple AirPods BLE product IDs (Continuity type 0x07, bytes 2-3
-/// little-endian) to display names. Returned as &'static for cheap cloning.
-fn continuity_model_name(model_le: u16) -> Option<&'static str> {
-    // Stored as the BE-readable value (e.g. 0x200E for AirPods 1, since the
-    // wire bytes are 0x0E 0x20). Match against the LE-decoded u16 here.
-    Some(match model_le {
-        0x0220 => "AirPods 1",
-        0x0F20 => "AirPods 2",
-        0x1320 => "AirPods Pro",
-        0x1420 => "AirPods Max",
-        0x1B20 => "AirPods Pro 2 (Lightning)",
+/// Map Apple Continuity proximity-pairing product IDs (big-endian, as
+/// transmitted) to display names. Table from LibrePods.
+fn continuity_model_name(model: u16) -> Option<&'static str> {
+    Some(match model {
+        0x0220 => "AirPods",
+        0x0F20 => "AirPods (2nd gen)",
+        0x1320 => "AirPods (3rd gen)",
+        0x1920 => "AirPods 4",
+        0x1B20 => "AirPods 4 (ANC)",
+        0x0E20 => "AirPods Pro",
+        0x1420 => "AirPods Pro 2 (Lightning)",
         0x2420 => "AirPods Pro 2 (USB-C)",
-        0x2024 => "AirPods 4 ANC",
-        0x2424 => "AirPods Pro 3",
-        0x2020 => "AirPods 3",
-        0x1F20 => "AirPods 4",
+        0x0A20 => "AirPods Max",
+        0x1F20 => "AirPods Max (USB-C)",
         _ => return None,
     })
 }
 
-/// Parse Apple manufacturer data (vendor ID 0x004C) and pull out the AirPods
+/// Parse Apple manufacturer data (company 0x004C) and pull out the AirPods
 /// proximity-pairing record if present. Returns (model_hint, in_pair_mode).
+///
+/// Record layout (after the company ID, which BlueZ strips):
+/// `[0x07 type][len][pairing flag: 0x00 = pairing mode, 0x01 = paired][model hi][model lo][status]...`
 fn parse_apple_proximity(payload: &[u8]) -> Option<(String, bool)> {
-    // Layout for proximity record:
-    //   [0]=0x07 (type), [1]=length (usually 0x19), [2..]=record bytes
-    // Inside the record:
-    //   [2..4] = model ID (little-endian)
-    //   [4]    = status byte — lower nibble describes case lid + buds
     let mut i = 0;
     while i + 1 < payload.len() {
         let ty = payload[i];
@@ -232,17 +302,13 @@ fn parse_apple_proximity(payload: &[u8]) -> Option<(String, bool)> {
         if end > payload.len() {
             return None;
         }
-        if ty == 0x07 && len >= 5 {
-            // Bytes are at payload[i+2 .. end]
+        if ty == 0x07 && len >= 4 {
             let rec = &payload[i + 2..end];
-            let model_le = u16::from_le_bytes([rec[0], rec[1]]);
-            let status = rec[2];
-            let name = continuity_model_name(model_le)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("AirPods (model 0x{model_le:04X})"));
-            // Lower nibble: 0 case closed, ≥4 case open with buds inside.
-            // The exact bit pattern varies by firmware; this is a heuristic.
-            let in_pair_mode = (status & 0x0F) >= 4;
+            let in_pair_mode = rec[0] == 0x00;
+            let model = u16::from_be_bytes([rec[1], rec[2]]);
+            let name = continuity_model_name(model)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("AirPods (model 0x{model:04X})"));
             return Some((name, in_pair_mode));
         }
         i = end;
@@ -346,9 +412,42 @@ async fn is_airpods(device: &Device) -> bool {
 
     // Fallback: check device name
     if let Ok(Some(name)) = device.name().await
-        && name.contains("AirPods") {
-            return true;
-        }
+        && name.contains("AirPods")
+    {
+        return true;
+    }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proximity_record_decodes_model_and_pair_mode() {
+        // type 0x07, len 0x19, paired=0x01, model 0x14 0x20 (Pro 2 Lightning), status...
+        let mut rec = vec![
+            0x07, 0x19, 0x01, 0x14, 0x20, 0x2B, 0x99, 0x8F, 0x01, 0x00, 0x00,
+        ];
+        rec.resize(2 + 0x19, 0);
+        let (name, pairing) = parse_apple_proximity(&rec).unwrap();
+        assert_eq!(name, "AirPods Pro 2 (Lightning)");
+        assert!(!pairing);
+        rec[2] = 0x00;
+        assert!(parse_apple_proximity(&rec).unwrap().1);
+    }
+
+    #[test]
+    fn proximity_skips_other_records() {
+        // A 0x10 (nearby info) record followed by a proximity record.
+        let data = [
+            0x10, 0x02, 0xAA, 0xBB, 0x07, 0x05, 0x01, 0x24, 0x20, 0x00, 0x00,
+        ];
+        assert_eq!(
+            parse_apple_proximity(&data).unwrap().0,
+            "AirPods Pro 2 (USB-C)"
+        );
+        assert!(parse_apple_proximity(&[0x07, 0x09, 0x01]).is_none());
+    }
 }
