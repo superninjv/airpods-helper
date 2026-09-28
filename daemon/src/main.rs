@@ -62,7 +62,8 @@ async fn main() -> anyhow::Result<()> {
     let under_journald = std::env::var_os("JOURNAL_STREAM").is_some();
     let fmt = tracing_subscriber::fmt::layer()
         .with_target(false)
-        .with_ansi(!under_journald);
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()));
     use tracing_subscriber::prelude::*;
     if under_journald {
         // journald timestamps every line already
@@ -314,14 +315,18 @@ impl Daemon {
                     r.abort();
                 }
             }
-            Control::EqSelect(id) => self.select_eq(id).await,
-            Control::EqPresetChanged(id) => {
+            Control::EqSelect(id, done) => {
+                self.select_eq(id).await;
+                let _ = done.send(());
+            }
+            Control::EqPresetChanged(id, done) => {
                 if self.eq.preset_id() == Some(id.as_str()) {
                     // Re-read from disk (or fall back to the built-in, or
                     // disable if the preset no longer exists at all).
                     let still_exists = EqPreset::load(&id).is_ok();
                     self.select_eq(still_exists.then_some(id)).await;
                 }
+                let _ = done.send(());
             }
         }
     }
