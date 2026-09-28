@@ -15,7 +15,7 @@ AirPods support for Linux. A Rust daemon owns the AirPods session and exposes it
   - `mpris.rs` — pause on bud removal, resume only what we paused.
   - `eq/` — `preset.rs` (load/validate/save; built-ins are `include_str!`'d from `eq-presets/`), `dsp.rs` (RBJ biquads), `pipewire.rs` (filter-chain in a supervised `pipewire -c` child; smart filter on WirePlumber ≥ 0.5, else pinned target + default-sink redirect), `pulse.rs` (null sink → parec → biquads → pacat), `mod.rs` (`EqManager`: backend detection, status, restore on stop).
 - **`cli/`** — `airpods-cli`; reads state with one `GetAll`.
-- **`app/`** — Tauri app, D-Bus client of the daemon.
+- **`app/`** — Tauri app, D-Bus client of the daemon. `app/dev/` has a browser mock (`mock.html`) and a fake daemon (`mock-daemon.py`) for UI work without AirPods.
 - **`widget/`** — AGS/GTK4 widgets. Costa OS carries copies in `costa-os/shell/widget/airpods/`; keep them in sync.
 - **`windows/`** — experimental; excluded from the workspace. Check with `cargo clippy --target x86_64-pc-windows-gnu` from `windows/`.
 

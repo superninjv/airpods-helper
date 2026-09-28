@@ -1,6 +1,6 @@
 [package]
 name = "airpods-app"
-version = "0.3.0-rc.1"
+version = "0.3.0"
 edition = "2024"
 
 # Standalone crate (excluded from the root workspace); an explicit empty table
