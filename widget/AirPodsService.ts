@@ -2,13 +2,20 @@ import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import { createState } from "gnim"
 
-// D-Bus proxy for org.costa.AirPods
-// Polls properties via standard D-Bus Properties interface
-// Listens for PropertiesChanged signals for reactive updates
+// D-Bus proxy for org.costa.AirPods (API v2, see docs/dbus-api.md)
+// Reads cached properties from the proxy and listens for PropertiesChanged
+// signals for reactive updates.
 
 const BUS_NAME = "org.costa.AirPods"
 const OBJECT_PATH = "/org/costa/AirPods"
 const IFACE_NAME = "org.costa.AirPods"
+
+export interface EqPresetInfo {
+  id: string
+  name: string
+  description: string
+  userEditable: boolean
+}
 
 export interface AirPodsState {
   available: boolean
@@ -25,8 +32,16 @@ export interface AirPodsState {
   conversationalAwareness: boolean
   adaptiveNoiseLevel: number
   oneBudAnc: boolean
+  volumeSwipe: boolean
+  micMode: string
+  /** Preset id ("" = EQ off). */
   eqPreset: string
+  /** off | active | waiting | error | unsupported */
+  eqStatus: string
+  eqError: string
+  eqPresets: EqPresetInfo[]
   model: string
+  modelName: string
   firmware: string
   features: string[]
 }
@@ -46,8 +61,14 @@ const DEFAULT_STATE: AirPodsState = {
   conversationalAwareness: false,
   adaptiveNoiseLevel: 50,
   oneBudAnc: true,
+  volumeSwipe: true,
+  micMode: "auto",
   eqPreset: "",
+  eqStatus: "off",
+  eqError: "",
+  eqPresets: [],
   model: "",
+  modelName: "",
   firmware: "",
   features: [],
 }
@@ -55,7 +76,13 @@ const DEFAULT_STATE: AirPodsState = {
 const [getState, setState] = createState<AirPodsState>({ ...DEFAULT_STATE })
 export { getState }
 
+/** True for over-ear models (single battery, no case, no per-bud ear status). */
+export function isHeadphones(s: AirPodsState): boolean {
+  return s.features.includes("headphones")
+}
+
 let proxy: Gio.DBusProxy | null = null
+let eqPresets: EqPresetInfo[] = []
 
 function unpackVariant(v: GLib.Variant): any {
   if (!v) return null
@@ -83,8 +110,13 @@ function readAllProperties(): Partial<AirPodsState> {
     conversationalAwareness: getProperty("ConversationalAwareness") ?? false,
     adaptiveNoiseLevel: getProperty("AdaptiveNoiseLevel") ?? 50,
     oneBudAnc: getProperty("OneBudAnc") ?? true,
+    volumeSwipe: getProperty("VolumeSwipe") ?? true,
+    micMode: getProperty("MicMode") ?? "auto",
     eqPreset: getProperty("EqPreset") ?? "",
+    eqStatus: getProperty("EqStatus") ?? "off",
+    eqError: getProperty("EqError") ?? "",
     model: getProperty("Model") ?? "",
+    modelName: getProperty("ModelName") ?? "",
     firmware: getProperty("Firmware") ?? "",
     features: getProperty("Features") ?? [],
   }
@@ -96,7 +128,37 @@ function syncState() {
     return
   }
   const props = readAllProperties()
-  setState({ ...DEFAULT_STATE, available: true, ...props })
+  setState({ ...DEFAULT_STATE, available: true, ...props, eqPresets })
+  if (props.eqPreset && !eqPresets.some((p) => p.id === props.eqPreset)) refreshEqPresets()
+}
+
+let presetsLoading = false
+
+/** Reload the preset list via GetEqPresets (ListEqPresets on v1 daemons). */
+export function refreshEqPresets() {
+  if (!proxy || presetsLoading) return
+  presetsLoading = true
+  const done = (list: EqPresetInfo[]) => {
+    presetsLoading = false
+    eqPresets = list
+    setState({ ...getState(), eqPresets })
+  }
+  proxy.call("GetEqPresets", null, Gio.DBusCallFlags.NONE, 5000, null, (p, res) => {
+    try {
+      const [list] = p!.call_finish(res).deepUnpack() as [[string, string, string, boolean][]]
+      done(list.map(([id, name, description, userEditable]) => ({ id, name, description, userEditable })))
+    } catch {
+      p!.call("ListEqPresets", null, Gio.DBusCallFlags.NONE, 5000, null, (p2, res2) => {
+        try {
+          const [ids] = p2!.call_finish(res2).deepUnpack() as [string[]]
+          done(ids.map((id) => ({ id, name: id, description: "", userEditable: false })))
+        } catch (e) {
+          presetsLoading = false
+          console.error(`airpods: listing EQ presets failed: ${e}`)
+        }
+      })
+    }
+  })
 }
 
 // Signal listeners
@@ -122,7 +184,7 @@ function connectProxy() {
     // Listen for property changes
     const propId = proxy.connect(
       "g-properties-changed",
-      (_proxy: Gio.DBusProxy, changed: GLib.Variant, _invalidated: string[]) => {
+      (_proxy: Gio.DBusProxy, _changed: GLib.Variant, _invalidated: string[]) => {
         syncState()
       },
     )
@@ -144,6 +206,7 @@ function connectProxy() {
     signalHandlers.push(sigId)
 
     syncState()
+    refreshEqPresets()
   } catch (e) {
     proxy = null
     setState({ ...DEFAULT_STATE })
@@ -162,75 +225,55 @@ export function setConnectionCallbacks(
   onDeviceDisconnected = onDisconnect
 }
 
-// D-Bus method calls
-export async function setAncMode(mode: string) {
+// D-Bus method calls (async; failures are logged, state follows PropertiesChanged)
+function call(method: string, args: GLib.Variant | null = null) {
   if (!proxy) return
-  proxy.call(
-    "SetAncMode",
-    new GLib.Variant("(s)", [mode]),
-    Gio.DBusCallFlags.NONE,
-    5000,
-    null,
-    null,
-  )
+  proxy.call(method, args, Gio.DBusCallFlags.NONE, 5000, null, (p, res) => {
+    try {
+      p!.call_finish(res)
+    } catch (e) {
+      console.error(`airpods: ${method} failed: ${e}`)
+    }
+  })
+}
+
+export async function setAncMode(mode: string) {
+  call("SetAncMode", new GLib.Variant("(s)", [mode]))
 }
 
 export async function setConversationalAwareness(enabled: boolean) {
-  if (!proxy) return
-  proxy.call(
-    "SetConversationalAwareness",
-    new GLib.Variant("(b)", [enabled]),
-    Gio.DBusCallFlags.NONE,
-    5000,
-    null,
-    null,
-  )
+  call("SetConversationalAwareness", new GLib.Variant("(b)", [enabled]))
 }
 
 export async function setOneBudAnc(enabled: boolean) {
-  if (!proxy) return
-  proxy.call(
-    "SetOneBudAnc",
-    new GLib.Variant("(b)", [enabled]),
-    Gio.DBusCallFlags.NONE,
-    5000,
-    null,
-    null,
-  )
+  call("SetOneBudAnc", new GLib.Variant("(b)", [enabled]))
+}
+
+export async function setVolumeSwipe(enabled: boolean) {
+  call("SetVolumeSwipe", new GLib.Variant("(b)", [enabled]))
+}
+
+/** "auto" | "left" | "right" */
+export async function setMicMode(mode: string) {
+  call("SetMicMode", new GLib.Variant("(s)", [mode]))
 }
 
 export async function setAdaptiveNoiseLevel(level: number) {
-  if (!proxy) return
-  proxy.call(
-    "SetAdaptiveNoiseLevel",
-    new GLib.Variant("(y)", [Math.min(100, Math.max(0, level))]),
-    Gio.DBusCallFlags.NONE,
-    5000,
-    null,
-    null,
-  )
+  call("SetAdaptiveNoiseLevel", new GLib.Variant("(y)", [Math.min(100, Math.max(0, Math.round(level)))]))
 }
 
-export async function setEqPreset(name: string) {
-  if (!proxy) return
-  proxy.call(
-    "SetEqPreset",
-    new GLib.Variant("(s)", [name]),
-    Gio.DBusCallFlags.NONE,
-    5000,
-    null,
-    null,
-  )
+/** Select a preset by id (see `eqPresets`); "" turns EQ off. */
+export async function setEqPreset(id: string) {
+  if (id === "") call("DisableEq")
+  else call("SetEqPreset", new GLib.Variant("(s)", [id]))
 }
 
 export async function disableEq() {
-  if (!proxy) return
-  proxy.call("DisableEq", null, Gio.DBusCallFlags.NONE, 5000, null, null)
+  call("DisableEq")
 }
 
 export async function reconnect() {
-  if (!proxy) return
-  proxy.call("Reconnect", null, Gio.DBusCallFlags.NONE, 5000, null, null)
+  call("Reconnect")
 }
 
 // Watch for daemon appearing/disappearing on the bus
