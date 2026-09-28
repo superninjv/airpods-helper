@@ -46,7 +46,7 @@ impl BatteryEntry {
     /// disconnected (e.g. a bud in a closed case), since its level is stale.
     pub fn display_level(&self) -> i32 {
         if self.connected {
-            self.level as i32
+            self.level.min(100) as i32
         } else {
             -1
         }

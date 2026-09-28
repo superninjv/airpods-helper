@@ -56,7 +56,11 @@ pub fn match_bluez_sink(list_short_sinks: &str, address: Address) -> Option<(Str
     let mac = address.to_string().replace(':', "_").to_ascii_uppercase();
     short_rows(list_short_sinks).find_map(|c| {
         let name = c[1];
-        (name.starts_with("bluez_") && name.to_ascii_uppercase().contains(&mac))
+        let upper = name.to_ascii_uppercase();
+        // During a call PulseAudio swaps the A2DP sink for a headset-profile
+        // one; the EQ must not route (or hold the default) there.
+        let call_profile = ["HEADSET", "HANDSFREE", "HSP", "HFP"].iter().any(|p| upper.contains(p));
+        (name.starts_with("bluez_") && upper.contains(&mac) && !call_profile)
             .then(|| (c[0].to_string(), name.to_string()))
     })
 }
@@ -123,7 +127,12 @@ pub struct Restore {
 
 impl Restore {
     pub async fn run(self) {
-        let Some(module) = self.module else { return };
+        let Some(module) = self.module else {
+            // Nothing recorded, but a load may have completed just as the
+            // task was cancelled.
+            cleanup_stale().await;
+            return;
+        };
         let fallback = self
             .previous_default
             .filter(|d| d != SINK_NAME)
@@ -139,6 +148,7 @@ impl Restore {
         if let Err(e) = run_cmd("pactl", &["unload-module", &module]).await {
             warn!("failed to unload EQ null sink: {e}");
         }
+        cleanup_stale().await;
     }
 }
 
@@ -171,7 +181,8 @@ async fn pump(preset: &EqPreset, bluez_sink: &str) -> anyhow::Result<()> {
         "--rate=48000",
         "--channels=2",
     ];
-    let mut rec = Command::new("parec")
+    let mut rec = Command::new("parec");
+    rec
         .args([
             "-d",
             &format!("{SINK_NAME}.monitor"),
@@ -183,9 +194,10 @@ async fn pump(preset: &EqPreset, bluez_sink: &str) -> anyhow::Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()?;
-    let mut play = Command::new("pacat")
+        .kill_on_drop(true);
+    let mut rec = super::die_with_parent(&mut rec).spawn()?;
+    let mut play = Command::new("pacat");
+    play
         .args([
             "--playback",
             "-d",
@@ -203,8 +215,8 @@ async fn pump(preset: &EqPreset, bluez_sink: &str) -> anyhow::Result<()> {
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()?;
+        .kill_on_drop(true);
+    let mut play = super::die_with_parent(&mut play).spawn()?;
 
     let mut input = rec
         .stdout
@@ -242,12 +254,23 @@ async fn pump(preset: &EqPreset, bluez_sink: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Resolves once the AirPods A2DP sink is gone or has been replaced.
+async fn sink_gone(address: Address, sink: &str) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if find_bluez_sink(address).await.map(|(_, name)| name).as_deref() != Some(sink) {
+            return;
+        }
+    }
+}
+
 pub async fn supervise(
     preset: EqPreset,
     address: Address,
     status: StatusSink,
     restore: std::sync::Arc<tokio::sync::Mutex<Restore>>,
 ) {
+    const MAX_BACKOFF: Duration = Duration::from_secs(30);
     let mut backoff = Duration::from_secs(1);
     loop {
         let (bluez_idx, bluez_sink) = loop {
@@ -260,19 +283,22 @@ pub async fn supervise(
             }
         };
 
+        // Route through the EQ: once per appearance of the AirPods sink, so a
+        // pipeline hiccup doesn't re-take a default the user changed since.
         {
             let mut r = restore.lock().await;
             if r.module.is_none() {
+                let previous = default_sink().await.filter(|d| d != SINK_NAME);
                 match load_null_sink(&format!("AirPods EQ ({})", preset.name)).await {
                     Ok(module) => {
-                        r.previous_default = default_sink().await;
                         r.module = Some(module);
+                        r.previous_default = previous;
                     }
                     Err(e) => {
                         drop(r);
                         status.error(format!("failed to create EQ sink: {e}"));
                         tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(Duration::from_secs(30));
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
                         continue;
                     }
                 }
@@ -281,21 +307,34 @@ pub async fn supervise(
         }
         let _ = run_cmd("pactl", &["set-default-sink", SINK_NAME]).await;
         move_streams(&bluez_idx, SINK_NAME).await;
+        info!("EQ active via PulseAudio (preset '{}' → {bluez_sink})", preset.id);
 
-        info!(
-            "EQ active via PulseAudio (preset '{}' → {bluez_sink})",
-            preset.id
-        );
-        status.active();
-        let err = pump(&preset, &bluez_sink).await.err();
-        let msg = err.map(|e| e.to_string()).unwrap_or_default();
-        warn!(
-            "PulseAudio EQ pipeline stopped: {msg}; restarting in {}s",
-            backoff.as_secs()
-        );
-        status.error(format!("EQ audio pipeline stopped: {msg}"));
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(Duration::from_secs(30));
+        loop {
+            status.active();
+            let started = tokio::time::Instant::now();
+            tokio::select! {
+                result = pump(&preset, &bluez_sink) => {
+                    if started.elapsed() > Duration::from_secs(60) {
+                        backoff = Duration::from_secs(1);
+                    }
+                    let msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+                    warn!("PulseAudio EQ pipeline stopped: {msg}; restarting in {}s", backoff.as_secs());
+                    status.error(format!("EQ audio pipeline stopped: {msg}"));
+                    tokio::select! {
+                        _ = tokio::time::sleep(backoff) => {}
+                        _ = sink_gone(address, &bluez_sink) => break,
+                    }
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                }
+                _ = sink_gone(address, &bluez_sink) => break,
+            }
+        }
+
+        // The A2DP sink went away (call, profile switch, disconnect): undo the
+        // routing so audio isn't left pointing at the EQ, then wait for it.
+        info!("AirPods A2DP sink gone; pausing EQ routing");
+        std::mem::take(&mut *restore.lock().await).run().await;
+        status.waiting();
     }
 }
 
@@ -313,6 +352,8 @@ mod tests {
             Some(("3".into(), "bluez_sink.AA_BB_CC_DD_EE_FF.a2dp_sink".into()))
         );
         let pw = "71\tbluez_output.AA_BB_CC_DD_EE_FF.1\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED\n";
+        let call = "4\tbluez_sink.AA_BB_CC_DD_EE_FF.headset_head_unit\tmodule-bluez5-device.c\ts16le 1ch 16000Hz\tRUNNING\n";
+        assert_eq!(match_bluez_sink(call, addr), None, "headset profile is not an EQ target");
         assert_eq!(
             match_bluez_sink(pw, addr),
             Some(("71".into(), "bluez_output.AA_BB_CC_DD_EE_FF.1".into()))

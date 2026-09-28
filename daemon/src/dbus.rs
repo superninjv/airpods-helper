@@ -24,9 +24,9 @@ pub type SharedCmdTx = Arc<Mutex<Option<mpsc::Sender<L2capCommand>>>>;
 /// Requests from D-Bus clients that the main loop handles.
 #[derive(Debug)]
 pub enum Control {
-    Reconnect,
-    /// The user explicitly disconnected — don't auto-reconnect.
-    UserDisconnected,
+    Reconnect(oneshot::Sender<Result<(), String>>),
+    /// Disconnect the managed AirPods and don't auto-reconnect.
+    Disconnect(oneshot::Sender<Result<(), String>>),
     /// Select an EQ preset by id, or `None` to disable EQ. The sender is
     /// signalled once the change has taken effect.
     EqSelect(Option<String>, oneshot::Sender<()>),
@@ -56,11 +56,27 @@ fn preset_error(e: PresetError) -> fdo::Error {
 
 impl AirPodsInterface {
     async fn send_cmd(&self, cmd: L2capCommand) -> fdo::Result<()> {
-        let guard = self.cmd_tx.lock().await;
-        let tx = guard.as_ref().ok_or_else(|| failed("not connected"))?;
-        tx.send(cmd)
-            .await
-            .map_err(|_| failed("AirPods session ended"))
+        // Only once the handshake is done — before that the session isn't
+        // reading commands yet.
+        if !self.state.current().connected {
+            return Err(failed("not connected"));
+        }
+        // Clone the sender so the lock isn't held while sending.
+        let tx = self.cmd_tx.lock().await.clone().ok_or_else(|| failed("not connected"))?;
+        tx.try_send(cmd).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => failed("AirPods are busy; try again"),
+            mpsc::error::TrySendError::Closed(_) => failed("AirPods session ended"),
+        })
+    }
+
+    /// Send a control message that carries its own result.
+    async fn control_result(
+        &self,
+        make: impl FnOnce(oneshot::Sender<Result<(), String>>) -> Control,
+    ) -> fdo::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.control(make(tx)).await?;
+        rx.await.map_err(|_| failed("daemon is shutting down"))?.map_err(failed)
     }
 
     async fn control(&self, msg: Control) -> fdo::Result<()> {
@@ -85,9 +101,9 @@ impl AirPodsInterface {
         self.state.current()
     }
 
-    fn save_setting(&self, f: impl FnOnce(&mut config::Config)) -> fdo::Result<()> {
+    fn save_setting(&self, f: impl FnOnce(&mut config::Config)) -> zbus::Result<()> {
         config::update_config(&self.config, f)
-            .map_err(|e| failed(format!("failed to save config: {e}")))
+            .map_err(|e| failed(format!("failed to save config: {e}")).into())
     }
 }
 
@@ -242,7 +258,7 @@ impl AirPodsInterface {
         config::read(&self.config, |c| c.ear_detection.pause_media)
     }
     #[zbus(property)]
-    fn set_pause_on_removal(&mut self, v: bool) -> fdo::Result<()> {
+    fn set_pause_on_removal(&self, v: bool) -> zbus::Result<()> {
         self.save_setting(|c| c.ear_detection.pause_media = v)
     }
 
@@ -251,7 +267,7 @@ impl AirPodsInterface {
         config::read(&self.config, |c| c.ear_detection.resume_media)
     }
     #[zbus(property)]
-    fn set_resume_on_insert(&mut self, v: bool) -> fdo::Result<()> {
+    fn set_resume_on_insert(&self, v: bool) -> zbus::Result<()> {
         self.save_setting(|c| c.ear_detection.resume_media = v)
     }
 
@@ -260,7 +276,7 @@ impl AirPodsInterface {
         config::read(&self.config, |c| c.reconnect.auto_reconnect)
     }
     #[zbus(property)]
-    fn set_auto_reconnect(&mut self, v: bool) -> fdo::Result<()> {
+    fn set_auto_reconnect(&self, v: bool) -> zbus::Result<()> {
         self.save_setting(|c| c.reconnect.auto_reconnect = v)
     }
 
@@ -269,7 +285,7 @@ impl AirPodsInterface {
         config::read(&self.config, |c| c.eq.auto_load)
     }
     #[zbus(property)]
-    fn set_eq_auto_load(&mut self, v: bool) -> fdo::Result<()> {
+    fn set_eq_auto_load(&self, v: bool) -> zbus::Result<()> {
         self.save_setting(|c| c.eq.auto_load = v)
     }
 
@@ -280,12 +296,10 @@ impl AirPodsInterface {
         })
     }
     #[zbus(property)]
-    fn set_preferred_device(&mut self, v: String) -> fdo::Result<()> {
+    fn set_preferred_device(&self, v: String) -> zbus::Result<()> {
         let v = v.trim().to_ascii_uppercase();
         if !v.is_empty() && v.parse::<bluer::Address>().is_err() {
-            return Err(fdo::Error::InvalidArgs(format!(
-                "invalid MAC address '{v}'"
-            )));
+            return Err(fdo::Error::InvalidArgs(format!("invalid MAC address '{v}'")).into());
         }
         self.save_setting(|c| c.device.address = (!v.is_empty()).then_some(v))
     }
@@ -330,7 +344,7 @@ impl AirPodsInterface {
 
     async fn reconnect(&self) -> fdo::Result<()> {
         info!("reconnect requested via D-Bus");
-        self.control(Control::Reconnect).await
+        self.control_result(Control::Reconnect).await
     }
 
     /// Trigger a BlueZ-level connect to the given AirPods MAC.
@@ -349,14 +363,7 @@ impl AirPodsInterface {
     /// suppressed until the next time they connect.
     async fn disconnect(&self) -> fdo::Result<()> {
         info!("Disconnect requested via D-Bus");
-        let addr = crate::bluez::currently_connected_airpods()
-            .await
-            .map_err(|e| failed(format!("BlueZ query failed: {e}")))?
-            .ok_or_else(|| failed("no AirPods currently connected"))?;
-        self.control(Control::UserDisconnected).await?;
-        crate::bluez::disconnect_device(addr)
-            .await
-            .map_err(|e| failed(format!("Bluetooth disconnect failed: {e}")))
+        self.control_result(Control::Disconnect).await
     }
 
     /// Pair (and trust) AirPods by MAC. They must be in pairing mode.

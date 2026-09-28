@@ -61,7 +61,9 @@ pub async fn watch_ear_detection(
         } else if let Some((player, wanted)) = &paused
             && now >= *wanted
         {
-            if resume {
+            // Only if it's still paused: the user may have stopped it, or
+            // started something else, while the bud was out.
+            if resume && playback_status(&conn, player).await.as_deref() == Some("Paused") {
                 info!("ear detection: bud back in, resuming {player}");
                 let _ = call_mpris(&conn, player, "Play").await;
             }
@@ -102,6 +104,13 @@ async fn find_playing_player(conn: &Connection) -> Option<String> {
     }
 
     None
+}
+
+async fn playback_status(conn: &Connection, player: &str) -> Option<String> {
+    let proxy = zbus::Proxy::new(conn, player, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player")
+        .await
+        .ok()?;
+    proxy.get_property::<String>("PlaybackStatus").await.ok()
 }
 
 /// Call a method on an MPRIS player

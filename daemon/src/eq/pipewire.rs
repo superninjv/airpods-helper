@@ -15,9 +15,11 @@
 
 use bluer::Address;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use super::preset::{EqPreset, FilterType};
@@ -208,19 +210,68 @@ fn runtime_dir() -> PathBuf {
         .join("airpods-helper")
 }
 
-async fn spawn(config: &str) -> std::io::Result<Child> {
-    let dir = runtime_dir();
-    tokio::fs::create_dir_all(&dir).await?;
-    let path = dir.join("eq-filter-chain.conf");
+fn conf_path() -> PathBuf {
+    runtime_dir().join("eq-filter-chain.conf")
+}
+
+fn pid_path() -> PathBuf {
+    runtime_dir().join("eq-filter-chain.pid")
+}
+
+/// Start the filter-chain process. Its stderr is drained into `last_line`
+/// continuously (an undrained pipe would eventually block it), and it gets
+/// SIGTERM if the daemon dies without cleaning up.
+async fn spawn(config: &str, last_line: Arc<std::sync::Mutex<String>>) -> std::io::Result<Child> {
+    tokio::fs::create_dir_all(runtime_dir()).await?;
+    let path = conf_path();
     tokio::fs::write(&path, config).await?;
-    Command::new("pipewire")
-        .arg("-c")
+    let mut cmd = Command::new("pipewire");
+    cmd.arg("-c")
         .arg(&path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+        .kill_on_drop(true);
+    super::die_with_parent(&mut cmd);
+    let mut child = cmd.spawn()?;
+    if let Some(pid) = child.id() {
+        let _ = tokio::fs::write(pid_path(), pid.to_string()).await;
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if !line.trim().is_empty() {
+                    *last_line.lock().unwrap_or_else(|e| e.into_inner()) = line;
+                }
+            }
+        });
+    }
+    Ok(child)
+}
+
+/// Clean up after a previous run that didn't exit cleanly (crash, SIGKILL):
+/// stop an orphaned filter process and un-point the default sink at it.
+pub async fn cleanup_stale() {
+    if let Ok(pid) = tokio::fs::read_to_string(pid_path()).await
+        && let Ok(pid) = pid.trim().parse::<i32>()
+    {
+        let cmdline = tokio::fs::read(format!("/proc/{pid}/cmdline")).await.unwrap_or_default();
+        let ours = String::from_utf8_lossy(&cmdline).contains(&*conf_path().to_string_lossy());
+        if ours {
+            info!("stopping EQ filter process {pid} left by a previous run");
+            // SAFETY: plain kill(2) on a pid we verified runs our config.
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+        }
+    }
+    let _ = tokio::fs::remove_file(pid_path()).await;
+    if run_cmd("pw-cli", &["info", "0"]).await.is_ok()
+        && get_configured_default().await.as_deref() == Some(SINK_NODE)
+    {
+        info!("clearing a default sink that still points at the EQ from a previous run");
+        set_configured_default(None).await;
+    }
 }
 
 /// Minimal view of `pw-dump` output.
@@ -295,11 +346,24 @@ async fn set_configured_default(name: Option<&str>) {
 /// What must be undone when a legacy-mode EQ stops.
 #[derive(Debug, Default)]
 pub struct Restore {
+    /// `Some(prev)` once we've redirected the default sink; `prev` is what it
+    /// was before (`None` = nothing configured).
     previous_default: Option<Option<String>>,
 }
 
 impl Restore {
+    /// Point the default output at the EQ, remembering the current one.
+    async fn redirect_default(&mut self) {
+        if self.previous_default.is_none() {
+            // Never remember ourselves as "previous" (e.g. after a crash).
+            let prev = get_configured_default().await.filter(|d| d != SINK_NODE);
+            self.previous_default = Some(prev);
+        }
+        set_configured_default(Some(SINK_NODE)).await;
+    }
+
     pub async fn run(self) {
+        let _ = tokio::fs::remove_file(pid_path()).await;
         if let Some(prev) = self.previous_default {
             // Only restore if we're still the default — the user may have
             // picked something else in the meantime.
@@ -318,12 +382,13 @@ pub async fn supervise(
     address: Address,
     smart: bool,
     status: StatusSink,
-    restore: std::sync::Arc<tokio::sync::Mutex<Restore>>,
+    restore: Arc<Mutex<Restore>>,
 ) {
+    const MAX_BACKOFF: Duration = Duration::from_secs(30);
     let mut backoff = Duration::from_secs(1);
     loop {
         // Wait until the AirPods' audio sink exists (A2DP can come up a few
-        // seconds after the AAP session, and disappears during calls).
+        // seconds after connecting, and goes away during calls).
         let sink = loop {
             match find_bluez_sink(address).await {
                 Some(sink) => break sink,
@@ -334,78 +399,65 @@ pub async fn supervise(
             }
         };
 
-        let routing = if smart {
-            Routing::Smart { address }
-        } else {
-            Routing::Target { node_name: &sink }
-        };
-        let config = generate_config(&preset, &routing);
-        let mut child = match spawn(&config).await {
+        let routing = if smart { Routing::Smart { address } } else { Routing::Target { node_name: &sink } };
+        let last_line = Arc::new(std::sync::Mutex::new(String::new()));
+        let mut child = match spawn(&generate_config(&preset, &routing), last_line.clone()).await {
             Ok(child) => child,
             Err(e) => {
                 status.error(format!("failed to start PipeWire filter chain: {e}"));
                 tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(30));
+                backoff = (backoff * 2).min(MAX_BACKOFF);
                 continue;
             }
         };
+        let started = tokio::time::Instant::now();
         info!(
             "EQ filter chain started (preset '{}', {} mode)",
             preset.id,
             if smart { "smart-filter" } else { "legacy" }
         );
-
         if !smart {
             // Give the node a moment to register before pointing the default at it.
             tokio::time::sleep(Duration::from_millis(300)).await;
-            let mut r = restore.lock().await;
-            if r.previous_default.is_none() {
-                r.previous_default = Some(get_configured_default().await);
-            }
-            set_configured_default(Some(SINK_NODE)).await;
+            restore.lock().await.redirect_default().await;
         }
 
-        // While the child runs, track whether the AirPods sink is present so
-        // the UI can tell "active" from "waiting" (e.g. during a call, when
-        // the A2DP sink goes away). pw-dump isn't free, so poll quickly only
-        // while waiting and rarely once active.
+        // Track the AirPods sink while the filter runs. pw-dump isn't free,
+        // so poll quickly only while waiting and rarely once active.
         let exit = loop {
-            let present = find_bluez_sink(address).await.is_some();
-            if present {
-                status.active()
-            } else {
-                status.waiting()
+            let current = find_bluez_sink(address).await;
+            match &current {
+                Some(name) if smart || *name == sink => status.active(),
+                Some(_) => break None, // legacy: pinned node was replaced — respawn
+                None if smart => status.waiting(), // WirePlumber re-links when it's back
+                None => break None, // legacy: don't leave the default pointing at a dead end
             }
-            let every = Duration::from_secs(if present { 30 } else { 3 });
+            let every = Duration::from_secs(if current.is_some() { 30 } else { 3 });
             tokio::select! {
-                exit = child.wait() => break exit,
+                exit = child.wait() => break Some(exit),
                 _ = tokio::time::sleep(every) => {}
             }
         };
 
-        let stderr = match child.stderr.take() {
-            Some(mut s) => {
-                use tokio::io::AsyncReadExt;
-                let mut buf = String::new();
-                let _ = s.read_to_string(&mut buf).await;
-                buf
-            }
-            None => String::new(),
+        let Some(exit) = exit else {
+            // Legacy target went away or changed: tear down and start over.
+            drop(child);
+            std::mem::take(&mut *restore.lock().await).run().await;
+            status.waiting();
+            continue;
         };
-        let last_line = stderr
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("")
-            .trim();
+        if started.elapsed() > Duration::from_secs(60) {
+            backoff = Duration::from_secs(1); // it ran fine for a while; this is a fresh failure
+        }
+        let detail = last_line.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let msg = match exit {
-            Ok(code) => format!("PipeWire filter chain exited ({code}) {last_line}"),
+            Ok(code) => format!("PipeWire filter chain exited ({code}) {detail}"),
             Err(e) => format!("PipeWire filter chain failed: {e}"),
         };
         warn!("{msg}; restarting in {}s", backoff.as_secs());
         status.error(msg.trim().to_string());
         tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(Duration::from_secs(30));
+        backoff = (backoff * 2).min(MAX_BACKOFF);
     }
 }
 
@@ -503,7 +555,7 @@ mod tests {
             .trim()
             .to_string();
         let conf = generate_config(&preset(), &Routing::Target { node_name: &sink });
-        let mut child = spawn(&conf).await.unwrap();
+        let mut child = spawn(&conf, Default::default()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(1500)).await;
         let links = run_cmd("pw-link", &["-l"]).await.unwrap();
         child.kill().await.unwrap();

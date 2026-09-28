@@ -158,7 +158,14 @@ impl Processor {
     pub fn process(&mut self, samples: &mut [f32]) {
         for frame in samples.chunks_exact_mut(self.channels) {
             for (ch, sample) in frame.iter_mut().enumerate() {
-                let mut x = *sample as f64 * self.gain;
+                let input = *sample as f64;
+                if !input.is_finite() {
+                    // One NaN would poison the filter state forever.
+                    self.state[ch].iter_mut().for_each(|s| *s = State::default());
+                    *sample = 0.0;
+                    continue;
+                }
+                let mut x = input * self.gain;
                 for (c, s) in self.coeffs.iter().zip(self.state[ch].iter_mut()) {
                     let y = c.b0 * x + s.z1;
                     s.z1 = c.b1 * x - c.a1 * y + s.z2;
@@ -282,5 +289,15 @@ mod tests {
                 "{freq} Hz: measured {measured:.2} expected {expected:.2}"
             );
         }
+    }
+
+    #[test]
+    fn nan_input_does_not_poison_the_filter() {
+        let p = preset(0.0, vec![band(FilterType::Peaking, 1000.0, 1.0, 6.0)]);
+        let mut proc = Processor::new(&p, FS, 1);
+        let mut buf = vec![0.5f32, f32::NAN, 0.5, 0.25];
+        proc.process(&mut buf);
+        assert_eq!(buf[1], 0.0);
+        assert!(buf.iter().all(|s| s.is_finite()), "{buf:?}");
     }
 }
