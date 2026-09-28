@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tracing::{info, warn};
 use zbus::object_server::{Interface, InterfaceRef, SignalEmitter};
 use zbus::zvariant::Value;
@@ -27,10 +27,11 @@ pub enum Control {
     Reconnect,
     /// The user explicitly disconnected — don't auto-reconnect.
     UserDisconnected,
-    /// Select an EQ preset by id, or `None` to disable EQ.
-    EqSelect(Option<String>),
+    /// Select an EQ preset by id, or `None` to disable EQ. The sender is
+    /// signalled once the change has taken effect.
+    EqSelect(Option<String>, oneshot::Sender<()>),
     /// A preset file changed on disk; re-apply if it's the active one.
-    EqPresetChanged(String),
+    EqPresetChanged(String, oneshot::Sender<()>),
 }
 
 pub struct AirPodsInterface {
@@ -67,6 +68,17 @@ impl AirPodsInterface {
             .send(msg)
             .await
             .map_err(|_| failed("daemon is shutting down"))
+    }
+
+    /// Send a control message and wait until the main loop has handled it,
+    /// so the reply means "done" and a following property read is current.
+    async fn control_wait(
+        &self,
+        make: impl FnOnce(oneshot::Sender<()>) -> Control,
+    ) -> fdo::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.control(make(tx)).await?;
+        rx.await.map_err(|_| failed("daemon is shutting down"))
     }
 
     fn s(&self) -> AirPodsState {
@@ -420,12 +432,12 @@ impl AirPodsInterface {
     async fn set_eq_preset(&self, id: &str) -> fdo::Result<()> {
         info!("SetEqPreset requested: {id}");
         EqPreset::load(id).map_err(preset_error)?;
-        self.control(Control::EqSelect(Some(id.to_string()))).await
+        self.control_wait(|done| Control::EqSelect(Some(id.to_string()), done)).await
     }
 
     async fn disable_eq(&self) -> fdo::Result<()> {
         info!("DisableEq requested via D-Bus");
-        self.control(Control::EqSelect(None)).await
+        self.control_wait(|done| Control::EqSelect(None, done)).await
     }
 
     async fn save_eq_preset(
@@ -445,7 +457,7 @@ impl AirPodsInterface {
         };
         let path = preset.save().map_err(preset_error)?;
         info!("saved EQ preset '{id}' to {}", path.display());
-        self.control(Control::EqPresetChanged(id.to_string())).await
+        self.control_wait(|done| Control::EqPresetChanged(id.to_string(), done)).await
     }
 
     async fn delete_eq_preset(&self, id: &str) -> fdo::Result<()> {
@@ -453,7 +465,7 @@ impl AirPodsInterface {
         info!("deleted EQ preset '{id}'");
         // A built-in with the same id may now show through; the main loop
         // re-applies or disables as appropriate.
-        self.control(Control::EqPresetChanged(id.to_string())).await
+        self.control_wait(|done| Control::EqPresetChanged(id.to_string(), done)).await
     }
 
     // ─── Signals ──────────────────────────────────────────────────────
