@@ -131,7 +131,9 @@ impl Config {
 
         let path = config_path();
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
-        let mut doc: DocumentMut = existing.parse().unwrap_or_default();
+        let mut doc: DocumentMut = existing
+            .parse()
+            .map_err(|e| std::io::Error::other(format!("{} doesn't parse: {e}", path.display())))?;
 
         fn table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
             if !doc.contains_table(key) {
@@ -180,9 +182,27 @@ pub fn read<T>(config: &SharedConfig, f: impl FnOnce(&Config) -> T) -> T {
 }
 
 /// Mutate the shared config and persist it.
+///
+/// The file is re-read first, so hand edits made while the daemon runs are
+/// picked up rather than overwritten. If it doesn't parse, nothing is
+/// written: replacing a file with a typo in it would lose the user's config.
 pub fn update_config(config: &SharedConfig, f: impl FnOnce(&mut Config)) -> std::io::Result<()> {
+    let on_disk = match std::fs::read_to_string(config_path()) {
+        Ok(text) => Some(toml::from_str::<Config>(&text).map_err(|e| {
+            std::io::Error::other(format!(
+                "{} has an error, fix it first: {}",
+                config_path().display(),
+                e.message()
+            ))
+        })?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
     let snapshot = {
         let mut guard = config.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(fresh) = on_disk {
+            *guard = fresh;
+        }
         f(&mut guard);
         guard.clone()
     };

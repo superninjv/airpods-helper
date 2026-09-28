@@ -13,13 +13,13 @@ they change, so clients should subscribe instead of polling.
 
 | Property | Type | Notes |
 |---|---|---|
-| `Connected` | `b` | AAP session up and handshake complete |
+| `Connected` | `b` | AAP control session up (handshake exchanged). Controls are rejected with `not connected` until this is true. |
 | `Address` | `s` | MAC of the connected AirPods, `""` when disconnected |
 | `Model` | `s` | Apple model number, e.g. `A2698` |
 | `ModelName` | `s` | e.g. `AirPods Pro 2 (Lightning)` |
 | `Firmware` | `s` | |
 | `Features` | `as` | Subset of: `anc`, `adaptive`, `ca`, `one_bud_anc`, `headphones`. `headphones` = over-ear (AirPods Max): a single battery (mirrored in `BatteryLeft`/`BatteryRight`), no case, no per-bud ear status. Empty while connecting. |
-| `BatteryLeft` / `BatteryRight` / `BatteryCase` | `i` | 0–100, `-1` = unknown / not reported (e.g. bud in closed case) |
+| `BatteryLeft` / `BatteryRight` / `BatteryCase` | `i` | 0–100 (clamped), `-1` = unknown / not reported (e.g. bud in closed case) |
 | `ChargingLeft` / `ChargingRight` / `ChargingCase` | `b` | |
 | `EarLeft` / `EarRight` | `b` | In-ear. Correctly follows primary-bud swaps. |
 | `AncMode` | `s` | `off`, `noise`, `transparency`, `adaptive` |
@@ -28,7 +28,10 @@ they change, so clients should subscribe instead of polling.
 | `ConversationalActivityState` | `s` | `normal`, `speaking`, `stopped` |
 | `OneBudAnc` | `b` | |
 | `VolumeSwipe` | `b` | |
-| `MicMode` | `s` | `auto`, `left`, `right` — last value set by a client (firmware does not report it) |
+| `AdaptiveVolume` | `b` | as reported by the firmware |
+| `ChimeVolume` | `y` | as reported by the firmware |
+| `AudioSource` | `s` | `none`, `call`, `media`, `unknown` |
+| `MicMode` | `s` | `auto`, `left`, `right` — reported by the firmware when it sends it, otherwise the last value a client set |
 | `Version` | `s` | daemon version |
 
 ## EQ properties (read-only)
@@ -48,9 +51,9 @@ they change, so clients should subscribe instead of polling.
 | `ResumeOnInsert` | `b` | `true` — resume what we paused when the bud goes back in |
 | `AutoReconnect` | `b` | `true` |
 | `PreferredDevice` | `s` | `""` — MAC; when set, other AirPods are ignored |
-| `EqAutoLoad` | `b` | `true` — apply `EqPreset` whenever the AirPods connect |
+| `EqAutoLoad` | `b` | `true` — apply `EqPreset` whenever the AirPods' Bluetooth link comes up (independent of the AAP control session) |
 
-Setting an invalid value (e.g. malformed MAC) returns `org.freedesktop.DBus.Error.InvalidArgs`.
+Setting an invalid value (e.g. malformed MAC) returns `org.freedesktop.DBus.Error.InvalidArgs`. Changes made through D-Bus emit `PropertiesChanged`; hand edits to `config.toml` take effect on the daemon's next config write or restart and are not signalled. If `config.toml` doesn't parse, setters fail rather than overwrite it.
 
 ## Methods
 
@@ -69,21 +72,21 @@ Setting an invalid value (e.g. malformed MAC) returns `org.freedesktop.DBus.Erro
 |---|---|---|---|
 | `ListPaired` | | `a(ss)` (mac, name) | |
 | `ConnectTo` | `s mac` | | BlueZ connect; AAP follows automatically |
-| `Disconnect` | | | |
+| `Disconnect` | | | Fails if nothing is connected. Suppresses auto-reconnect until the AirPods connect again. |
 | `Pair` | `s mac` | | pair + trust; ~20s timeout |
 | `QuickPairScan` | `u seconds` | `a(sssnb)` (mac, name, model, rssi, in_pair_mode) | |
-| `Reconnect` | | | |
+| `Reconnect` | | | Fails if no AirPods have connected since the daemon started. |
 
 ### EQ
 | Method | In | Out | Notes |
 |---|---|---|---|
 | `ListEqPresets` | | `as` | ids, sorted (kept for compatibility) |
 | `GetEqPresets` | | `a(sssb)` | (id, name, description, user_editable) |
-| `GetEqPreset` | `s id` | `(ssda(sddd))` | (name, description, preamp_db, bands[(type, freq_hz, q, gain_db)]); type ∈ `peaking`,`lowshelf`,`highshelf`,`lowpass`,`highpass`,`notch` |
-| `SetEqPreset` | `s id` | | select + persist; applied now if connected, else on connect |
+| `GetEqPreset` | `s id` | `s name, s description, d preamp_db, a(sddd) bands` | four out-args; bands are (type, freq_hz, q, gain_db), type ∈ `peaking`,`lowshelf`,`highshelf`,`lowpass`,`highpass`,`notch` |
+| `SetEqPreset` | `s id` | | select + persist; applied now if connected (even with `EqAutoLoad` off), else on connect. Returns once the change has taken effect. |
 | `DisableEq` | | | `EqPreset` becomes `""` |
 | `SaveEqPreset` | `s id, s name, s description, d preamp, a(sddd) bands` | | writes `~/.config/airpods-helper/eq/<id>.toml`; id must match `[a-z0-9-]{1,48}`; if it's the active preset it is re-applied live. Limits: ≤ 16 bands, 20 ≤ freq ≤ 20000, 0.1 ≤ q ≤ 10, −24 ≤ gain ≤ 24, −24 ≤ preamp ≤ 12 |
-| `DeleteEqPreset` | `s id` | | user presets only; deleting the active preset disables EQ |
+| `DeleteEqPreset` | `s id` | | user presets only. If it was the active preset: a built-in with the same id (which the user copy overrode) becomes active again; otherwise EQ is disabled. |
 
 ## Signals
 | Signal | Args |

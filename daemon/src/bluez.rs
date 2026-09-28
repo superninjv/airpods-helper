@@ -110,7 +110,9 @@ pub async fn monitor(tx: mpsc::Sender<BlueZEvent>) -> bluer::Result<()> {
                     }
                 }
                 Some(AdapterEvent::DeviceRemoved(addr)) => {
-                    watched.remove(&addr);
+                    // Keep `addr` in `watched`: its event stream stays in the
+                    // SelectAll and resumes if the device is re-added, so
+                    // re-subscribing would deliver every event twice.
                     if connected.remove(&addr) {
                         info!("AirPods removed: {addr}");
                         let _ = tx.send(BlueZEvent::AirPodsDisconnected(addr)).await;
@@ -382,21 +384,6 @@ pub async fn quick_pair_scan(duration_secs: u32) -> bluer::Result<Vec<QuickPairC
             .then(b.rssi.cmp(&a.rssi))
     });
     Ok(out)
-}
-
-/// Look up which paired AirPods (if any) is currently connected.
-pub async fn currently_connected_airpods() -> bluer::Result<Option<Address>> {
-    let session = Session::new().await?;
-    let adapter = session.default_adapter().await?;
-    for addr in adapter.device_addresses().await? {
-        if let Ok(device) = adapter.device(addr)
-            && device.is_connected().await.unwrap_or(false)
-            && is_airpods(&device).await
-        {
-            return Ok(Some(addr));
-        }
-    }
-    Ok(None)
 }
 
 /// Check if a BlueZ device is AirPods

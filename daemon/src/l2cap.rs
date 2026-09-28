@@ -78,7 +78,7 @@ pub async fn run(
     debug!("sent handshake");
 
     let mut buf = vec![0u8; 1024];
-    let n = seq.recv(&mut buf).await?;
+    let n = recv_timeout(&seq, &mut buf).await?;
     match parser::parse(&buf[..n]) {
         Ok(AapEvent::HandshakeAck) => debug!("handshake ACK received"),
         Ok(other) => warn!("unexpected response to handshake: {other:?}"),
@@ -88,7 +88,7 @@ pub async fn run(
     seq.send(&aap::commands::SET_FEATURES).await?;
     debug!("sent feature enable");
 
-    let n = seq.recv(&mut buf).await?;
+    let n = recv_timeout(&seq, &mut buf).await?;
     match parser::parse(&buf[..n]) {
         Ok(AapEvent::FeaturesAck) => debug!("features ACK received"),
         Ok(other) => warn!("unexpected response to features: {other:?}"),
@@ -236,7 +236,7 @@ fn apply_event(state: &SharedState, buds: &mut aap::BudTracker, event: &AapEvent
                     // Buds report the case at 0% once the lid closes; keep the
                     // last real reading rather than flashing 0%.
                     if case.connected && (case.level > 0 || case.charging) {
-                        s.battery_case = case.level as i32;
+                        s.battery_case = case.level.min(100) as i32;
                         s.charging_case = case.charging;
                     }
                 }
@@ -303,4 +303,12 @@ fn apply_event(state: &SharedState, buds: &mut aap::BudTracker, event: &AapEvent
         }
         _ => {}
     }
+}
+
+/// Handshake replies should arrive within milliseconds; if they don't, give
+/// up rather than holding the session (and the device) forever.
+async fn recv_timeout(seq: &SeqPacket, buf: &mut [u8]) -> io::Result<usize> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), seq.recv(buf))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "AirPods didn't answer the handshake"))?
 }
