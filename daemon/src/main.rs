@@ -39,6 +39,10 @@ struct Daemon {
     config: SharedConfig,
     cmd_tx: SharedCmdTx,
     session_tx: mpsc::Sender<SessionMsg>,
+    /// Loops back into the BlueZ event queue, for delayed session retries.
+    retry_tx: mpsc::Sender<BlueZEvent>,
+    /// AAP session restarts since the last successful handshake.
+    aap_retries: u32,
     eq: EqManager,
     session: Option<ActiveSession>,
     next_session_id: u64,
@@ -101,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
         config,
         cmd_tx,
         session_tx,
+        retry_tx: bluez_tx.clone(),
+        aap_retries: 0,
         session: None,
         next_session_id: 0,
         reconnect: None,
@@ -196,6 +202,7 @@ impl Daemon {
         if let Some(r) = self.reconnect.take() {
             r.abort();
         }
+        // Connecting again (case opened, bluetoothctl, …) lifts a manual disconnect.
         self.user_disconnected = false;
         self.last_address = Some(addr);
         self.start_session(addr).await;
@@ -250,6 +257,7 @@ impl Daemon {
         }
         info!("AirPods {addr} disconnected");
         self.end_session().await;
+        self.aap_retries = 0;
         self.maybe_reconnect(addr);
     }
 
@@ -262,13 +270,20 @@ impl Daemon {
         self.end_session().await;
         let still_connected =
             matches!(bluez::currently_connected_airpods().await, Ok(Some(a)) if a == addr);
-        if still_connected && !self.user_disconnected {
-            info!("Bluetooth still connected; restarting AAP session in 3s");
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            if self.session.is_none() {
-                self.start_session(addr).await;
-            }
+        if !still_connected || self.user_disconnected {
+            return;
         }
+        if self.aap_retries >= 3 {
+            warn!("AAP session keeps failing; not retrying until the AirPods reconnect (see `airpods-cli doctor`)");
+            return;
+        }
+        self.aap_retries += 1;
+        info!("Bluetooth still connected; restarting AAP session in 3s");
+        let tx = self.retry_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let _ = tx.send(BlueZEvent::AirPodsConnected(addr)).await;
+        });
     }
 
     fn maybe_reconnect(&mut self, addr: Address) {
@@ -286,6 +301,7 @@ impl Daemon {
 
     async fn on_aap_event(&mut self, event: AapEvent) {
         if let AapEvent::DeviceInfo(_) = event {
+            self.aap_retries = 0;
             // Model is known now; start EQ for this device if configured.
             let auto_load = config::read(&self.config, |c| c.eq.auto_load);
             let addr = self.session.as_ref().map(|s| s.address);
