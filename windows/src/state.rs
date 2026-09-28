@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::watch;
 
-use crate::aap::AncMode;
+use aap::AncMode;
 
 /// Shared AirPods state, updated by the L2CAP reader and consumed by the HTTP API
 #[derive(Debug, Clone, serde::Serialize)]
@@ -13,6 +13,7 @@ pub struct AirPodsState {
     pub charging_left: bool,
     pub charging_right: bool,
     pub charging_case: bool,
+    #[serde(serialize_with = "anc_as_str")]
     pub anc_mode: AncMode,
     pub ear_left: bool,
     pub ear_right: bool,
@@ -101,4 +102,8 @@ pub type SharedState = Arc<StateManager>;
 
 pub fn create_shared_state() -> SharedState {
     Arc::new(StateManager::new())
+}
+
+fn anc_as_str<S: serde::Serializer>(mode: &AncMode, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(mode.as_str())
 }

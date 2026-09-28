@@ -1,7 +1,6 @@
 // AAP/L2CAP modules contain Windows-specific code behind cfg(target_os = "windows").
 // On non-Windows builds, most items appear dead but are exercised via unit tests.
 #[allow(dead_code)]
-mod aap;
 mod ble;
 mod http;
 #[allow(dead_code)]
@@ -12,13 +11,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info, warn};
 
-use crate::aap::parser::AapEvent;
 use crate::http::SharedCmdTx;
 use crate::l2cap::BtAddr;
 use crate::state::create_shared_state;
+use aap::parser::AapEvent;
 
 #[derive(Parser)]
 #[command(
@@ -137,10 +136,7 @@ async fn run_daemon() -> anyhow::Result<()> {
         // Scan for AirPods
         match ble::scan_for_airpods(&adapter, Duration::from_secs(30)).await {
             Ok(device) => {
-                info!(
-                    "found AirPods: {:?} at {}",
-                    device.name, device.address
-                );
+                info!("found AirPods: {:?} at {}", device.name, device.address);
 
                 let bt_addr = BtAddr::from_bytes(device.address.into_inner());
                 let (session_tx, session_rx) = mpsc::channel(32);
@@ -208,7 +204,9 @@ async fn run_daemon() -> anyhow::Result<()> {
 async fn http_get(path: &str) -> anyhow::Result<serde_json::Value> {
     let url = format!("{API_BASE}{path}");
     let resp = reqwest::get(&url).await.map_err(|e| {
-        anyhow::anyhow!("failed to connect to daemon at {url} (is airpods-windows daemon running?): {e}")
+        anyhow::anyhow!(
+            "failed to connect to daemon at {url} (is airpods-windows daemon running?): {e}"
+        )
     })?;
     let json: serde_json::Value = resp.json().await?;
     Ok(json)
@@ -217,9 +215,12 @@ async fn http_get(path: &str) -> anyhow::Result<serde_json::Value> {
 async fn http_post(path: &str, body: serde_json::Value) -> anyhow::Result<serde_json::Value> {
     let url = format!("{API_BASE}{path}");
     let client = reqwest::Client::new();
-    let resp = client.post(&url).json(&body).send().await.map_err(|e| {
-        anyhow::anyhow!("failed to connect to daemon at {url}: {e}")
-    })?;
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to connect to daemon at {url}: {e}"))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -254,17 +255,35 @@ async fn cmd_status(json: bool) -> anyhow::Result<()> {
     let bc = status["battery_case"].as_i64().unwrap_or(-1);
     let el = status["ear_left"].as_bool().unwrap_or(false);
     let er = status["ear_right"].as_bool().unwrap_or(false);
-    let ca = status["conversational_awareness"].as_bool().unwrap_or(false);
+    let ca = status["conversational_awareness"]
+        .as_bool()
+        .unwrap_or(false);
     let noise = status["adaptive_noise_level"].as_u64().unwrap_or(0);
     let ob = status["one_bud_anc"].as_bool().unwrap_or(false);
     let vs = status["volume_swipe"].as_bool().unwrap_or(false);
 
-    let display_name = if model_name.is_empty() { model } else { model_name };
+    let display_name = if model_name.is_empty() {
+        model
+    } else {
+        model_name
+    };
     println!("{display_name}  (FW {firmware})");
     println!();
-    print_battery("Left ", bl, status["charging_left"].as_bool().unwrap_or(false));
-    print_battery("Right", br, status["charging_right"].as_bool().unwrap_or(false));
-    print_battery("Case ", bc, status["charging_case"].as_bool().unwrap_or(false));
+    print_battery(
+        "Left ",
+        bl,
+        status["charging_left"].as_bool().unwrap_or(false),
+    );
+    print_battery(
+        "Right",
+        br,
+        status["charging_right"].as_bool().unwrap_or(false),
+    );
+    print_battery(
+        "Case ",
+        bc,
+        status["charging_case"].as_bool().unwrap_or(false),
+    );
     println!();
     println!("ANC:    {anc}");
     if anc == "adaptive" {
@@ -326,7 +345,9 @@ async fn cmd_anc(mode: Option<String>) -> anyhow::Result<()> {
             let m = m.to_lowercase();
             match m.as_str() {
                 "off" | "noise" | "transparency" | "adaptive" => {}
-                _ => anyhow::bail!("invalid ANC mode: {m} (use: off, noise, transparency, adaptive)"),
+                _ => {
+                    anyhow::bail!("invalid ANC mode: {m} (use: off, noise, transparency, adaptive)")
+                }
             }
             let resp = http_post("/anc", serde_json::json!({ "mode": m })).await?;
             println!("ANC: {}", resp["anc_mode"].as_str().unwrap_or(&m));
@@ -351,7 +372,9 @@ async fn cmd_ca(toggle: Option<String>) -> anyhow::Result<()> {
         }
         None => {
             let status = http_get("/status").await?;
-            let ca = status["conversational_awareness"].as_bool().unwrap_or(false);
+            let ca = status["conversational_awareness"]
+                .as_bool()
+                .unwrap_or(false);
             println!("{}", if ca { "on" } else { "off" });
         }
     }

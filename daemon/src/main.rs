@@ -1,10 +1,8 @@
-mod aap;
 mod bluez;
 mod config;
 mod dbus;
 mod eq;
 mod l2cap;
-mod models;
 mod mpris;
 mod state;
 
@@ -16,12 +14,12 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::aap::parser::AapEvent;
 use crate::bluez::BlueZEvent;
 use crate::config::SharedConfig;
 use crate::dbus::{Control, SharedCmdTx};
 use crate::eq::{EqManager, EqPreset};
 use crate::state::{SharedState, create_shared_state};
+use aap::parser::AapEvent;
 
 /// Messages from an L2CAP session task, tagged with its session id so late
 /// messages from a superseded session are ignored.
@@ -50,14 +48,31 @@ struct Daemon {
     user_disconnected: bool,
 }
 
-#[tokio::main]
+// Single-threaded: the daemon is idle almost all the time, and one thread
+// is plenty for BlueZ/D-Bus/L2CAP traffic. (The multi-thread runtime spawned
+// a worker per CPU core.)
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "airpods_daemon=info".into()),
-        )
-        .init();
+    // RUST_LOG uses `target=level` directives (e.g. `airpods_daemon=debug`).
+    // Parsed with `Targets` rather than EnvFilter to avoid pulling in regex.
+    let filter: tracing_subscriber::filter::Targets = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| "airpods_daemon=info".parse().expect("valid default filter"));
+    let under_journald = std::env::var_os("JOURNAL_STREAM").is_some();
+    let fmt = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_ansi(!under_journald);
+    use tracing_subscriber::prelude::*;
+    if under_journald {
+        // journald timestamps every line already
+        tracing_subscriber::registry()
+            .with(fmt.without_time())
+            .with(filter)
+            .init();
+    } else {
+        tracing_subscriber::registry().with(fmt).with(filter).init();
+    }
 
     info!("airpods-daemon {} starting", env!("CARGO_PKG_VERSION"));
 

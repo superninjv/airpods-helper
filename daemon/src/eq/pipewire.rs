@@ -366,7 +366,9 @@ pub async fn supervise(
         }
 
         // While the child runs, track whether the AirPods sink is present so
-        // the UI can tell "active" from "waiting".
+        // the UI can tell "active" from "waiting" (e.g. during a call, when
+        // the A2DP sink goes away). pw-dump isn't free, so poll quickly only
+        // while waiting and rarely once active.
         let exit = loop {
             let present = find_bluez_sink(address).await.is_some();
             if present {
@@ -374,9 +376,10 @@ pub async fn supervise(
             } else {
                 status.waiting()
             }
+            let every = Duration::from_secs(if present { 30 } else { 3 });
             tokio::select! {
                 exit = child.wait() => break exit,
-                _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+                _ = tokio::time::sleep(every) => {}
             }
         };
 
