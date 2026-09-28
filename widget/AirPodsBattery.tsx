@@ -10,10 +10,17 @@ export function setBarLock(lock: () => void, unlock: () => void) {
   _unlockBar = unlock
 }
 
-// ─── D-Bus proxy (inline, no gnim) ─────────────────────────────
+// ─── D-Bus proxy (inline, no gnim) — API v2, see docs/dbus-api.md ──────
 
 const BUS = "org.costa.AirPods"
 const PATH = "/org/costa/AirPods"
+
+interface EqPresetInfo {
+  id: string
+  name: string
+  description: string
+  userEditable: boolean
+}
 
 let proxy: Gio.DBusProxy | null = null
 let state = {
@@ -25,10 +32,14 @@ let state = {
   conversationalAwareness: false,
   adaptiveNoiseLevel: 50,
   oneBudAnc: true,
+  micMode: "auto",
   eqPreset: "",
-  model: "", firmware: "",
+  eqStatus: "off",
+  eqError: "",
+  model: "", modelName: "", firmware: "",
   features: [] as string[],
 }
+let eqPresets: EqPresetInfo[] = []
 
 const listeners: (() => void)[] = []
 function notify() { for (const fn of listeners) fn() }
@@ -59,17 +70,55 @@ function sync() {
     conversationalAwareness: gp("ConversationalAwareness") ?? false,
     adaptiveNoiseLevel: gp("AdaptiveNoiseLevel") ?? 50,
     oneBudAnc: gp("OneBudAnc") ?? true,
+    micMode: gp("MicMode") ?? "auto",
     eqPreset: gp("EqPreset") ?? "",
+    eqStatus: gp("EqStatus") ?? "off",
+    eqError: gp("EqError") ?? "",
     model: gp("Model") ?? "",
+    modelName: gp("ModelName") ?? "",
     firmware: gp("Firmware") ?? "",
     features: gp("Features") ?? [],
   }
+  // A preset we don't know yet (created via app/CLI) → refresh the list.
+  if (state.eqPreset && !eqPresets.some((p) => p.id === state.eqPreset)) loadPresets()
   notify()
 }
 
 function call(method: string, args: GLib.Variant | null = null) {
   if (!proxy) return
-  proxy.call(method, args, Gio.DBusCallFlags.NONE, 5000, null, null)
+  proxy.call(method, args, Gio.DBusCallFlags.NONE, 5000, null, (p, res) => {
+    try {
+      p!.call_finish(res)
+    } catch (e) {
+      console.error(`airpods: ${method} failed: ${e}`)
+    }
+  })
+}
+
+/** GetEqPresets → a(sssb); falls back to ListEqPresets (as) on v1 daemons. */
+let presetsLoading = false
+function loadPresets() {
+  if (!proxy || presetsLoading) return
+  presetsLoading = true
+  proxy.call("GetEqPresets", null, Gio.DBusCallFlags.NONE, 5000, null, (p, res) => {
+    try {
+      const [list] = p!.call_finish(res).deepUnpack() as [[string, string, string, boolean][]]
+      eqPresets = list.map(([id, name, description, userEditable]) => ({ id, name, description, userEditable }))
+      presetsLoading = false
+      notify()
+    } catch {
+      p!.call("ListEqPresets", null, Gio.DBusCallFlags.NONE, 5000, null, (p2, res2) => {
+        presetsLoading = false
+        try {
+          const [ids] = p2!.call_finish(res2).deepUnpack() as [string[]]
+          eqPresets = ids.map((id) => ({ id, name: presetLabel(id), description: "", userEditable: false }))
+          notify()
+        } catch (e) {
+          console.error(`airpods: listing EQ presets failed: ${e}`)
+        }
+      })
+    }
+  })
 }
 
 function initProxy() {
@@ -77,6 +126,7 @@ function initProxy() {
     proxy = Gio.DBusProxy.new_for_bus_sync(Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, null, BUS, PATH, BUS, null)
     proxy.connect("g-properties-changed", () => sync())
     sync()
+    loadPresets()
   } catch { proxy = null }
 }
 
@@ -88,30 +138,53 @@ initProxy()
 
 // ─── Helpers ────────────────────────────────────────────────────
 
-function clearBox(box: Gtk.Box) {
+function clearBox(box: Gtk.Box | Gtk.FlowBox) {
   let c = box.get_first_child()
   while (c) { const n = c.get_next_sibling(); box.remove(c); c = n }
 }
 
 function batColor(level: number): string {
+  if (level < 0) return "ap-bat-unknown"
   if (level <= 15) return "ap-bat-red"
   if (level <= 30) return "ap-bat-yellow"
   return "ap-bat-green"
+}
+
+/** "bass-boost" → "Bass Boost" (used when the daemon has no display name). */
+function presetLabel(id: string): string {
+  return id.split(/[-_]/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(" ")
+}
+
+const ANC_LABELS: Record<string, string> = {
+  off: "ANC Off",
+  noise: "Noise Cancellation",
+  transparency: "Transparency",
+  adaptive: "Adaptive",
+}
+
+const EQ_STATUS_LABELS: Record<string, string> = {
+  off: "Off",
+  active: "Active",
+  waiting: "Waiting",
+  error: "Error",
+  unsupported: "Unavailable",
 }
 
 // ─── Widget ─────────────────────────────────────────────────────
 
 export default function AirPodsBattery() {
   // Bar label
-  const barLabel = new Gtk.Label({ label: "\uF025" })
+  const barLabel = new Gtk.Label({ label: "" })
 
   // ── Battery section ──
   function makeBatRow(label: string, level: number, charging: boolean): Gtk.Widget {
+    const known = level >= 0
     const row = new Gtk.Box({ spacing: 8, cssClasses: ["ap-bat-row", batColor(level)] })
-    row.append(new Gtk.Label({ label, widthChars: 5, xalign: 0, cssClasses: ["ap-bat-label"] }))
-    const bar = new Gtk.LevelBar({ value: level / 100, hexpand: true, cssClasses: ["ap-bat-bar"] })
+    row.append(new Gtk.Label({ label, widthChars: 7, xalign: 0, cssClasses: ["ap-bat-label"] }))
+    const bar = new Gtk.LevelBar({ value: known ? level / 100 : 0, hexpand: true, cssClasses: ["ap-bat-bar"] })
     row.append(bar)
-    row.append(new Gtk.Label({ label: `${level}%${charging ? " \u26A1" : ""}`, widthChars: 6, xalign: 1, cssClasses: ["ap-bat-pct"] }))
+    const text = known ? `${level}%` : "—"
+    row.append(new Gtk.Label({ label: `${text}${charging ? " ⚡" : ""}`, widthChars: 6, xalign: 1, cssClasses: ["ap-bat-pct"] }))
     return row as Gtk.Widget
   }
 
@@ -119,17 +192,17 @@ export default function AirPodsBattery() {
 
   // ── ANC mode selector ──
   const ancModes = [
-    { id: "off", label: "Off", icon: "\uF057" },
-    { id: "noise", label: "ANC", icon: "\uF2A2" },
-    { id: "transparency", label: "Transp.", icon: "\uF29C" },
-    { id: "adaptive", label: "Adaptive", icon: "\uF042" },
+    { id: "off", label: "Off", icon: "" },
+    { id: "noise", label: "ANC", icon: "" },
+    { id: "transparency", label: "Transp.", icon: "" },
+    { id: "adaptive", label: "Adaptive", icon: "" },
   ]
 
   const ancBox = new Gtk.Box({ spacing: 4, cssClasses: ["ap-anc-row"], homogeneous: true })
   const ancBtns: Gtk.Button[] = []
 
   for (const mode of ancModes) {
-    const btn = new Gtk.Button({ cssClasses: ["ap-anc-btn"], tooltipText: mode.label })
+    const btn = new Gtk.Button({ cssClasses: ["ap-anc-btn"], tooltipText: ANC_LABELS[mode.id] })
     const inner = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 })
     inner.append(new Gtk.Label({ label: mode.icon, cssClasses: ["ap-anc-icon"] }))
     inner.append(new Gtk.Label({ label: mode.label, cssClasses: ["ap-anc-label"] }))
@@ -151,7 +224,9 @@ export default function AirPodsBattery() {
   noiseSlider.set_value(50)
   noiseSlider.set_draw_value(false)
   let sliderTimeout: number | null = null
+  let updatingSlider = false
   noiseSlider.connect("value-changed", () => {
+    if (updatingSlider) return
     if (sliderTimeout) GLib.source_remove(sliderTimeout)
     sliderTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
       call("SetAdaptiveNoiseLevel", new GLib.Variant("(y)", [Math.round(noiseSlider.get_value())]))
@@ -161,7 +236,7 @@ export default function AirPodsBattery() {
   })
   noiseSliderBox.append(noiseSlider)
 
-  // ── Toggles ──
+  // ── Toggles + mic mode ──
   const togglesBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4, cssClasses: ["ap-section"] })
 
   const caRow = new Gtk.Box({ spacing: 8 })
@@ -174,33 +249,71 @@ export default function AirPodsBattery() {
   const obSwitch = new Gtk.Switch({ cssClasses: ["ap-toggle"] })
   obRow.append(obSwitch)
 
+  // Primary microphone (firmware doesn't report it; the daemon remembers
+  // the last value a client set).
+  const micRow = new Gtk.Box({ spacing: 8, cssClasses: ["ap-mic-row"] })
+  micRow.append(new Gtk.Label({ label: "Microphone", hexpand: true, xalign: 0, cssClasses: ["ap-toggle-label"] }))
+  const micModes = [
+    { id: "auto", label: "Auto" },
+    { id: "left", label: "Left" },
+    { id: "right", label: "Right" },
+  ]
+  const micBtns: Gtk.Button[] = []
+  const micBtnBox = new Gtk.Box({ spacing: 4 })
+  for (const m of micModes) {
+    const btn = new Gtk.Button({ label: m.label, cssClasses: ["ap-eq-btn", "ap-mic-btn"] })
+    btn.connect("clicked", () => call("SetMicMode", new GLib.Variant("(s)", [m.id])))
+    micBtns.push(btn)
+    micBtnBox.append(btn)
+  }
+  micRow.append(micBtnBox)
+
   togglesBox.append(caRow)
   togglesBox.append(obRow)
+  togglesBox.append(micRow)
 
   // ── EQ section ──
   const eqBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4, cssClasses: ["ap-section"] })
-  const eqLabel = new Gtk.Label({ label: "Equalizer", xalign: 0, cssClasses: ["ap-section-title"] })
-  const eqBtnBox = new Gtk.Box({ spacing: 4, cssClasses: ["ap-eq-row"] })
-  eqBox.append(eqLabel)
-  eqBox.append(eqBtnBox)
+  const eqHeader = new Gtk.Box({ spacing: 8 })
+  eqHeader.append(new Gtk.Label({ label: "Equalizer", hexpand: true, xalign: 0, cssClasses: ["ap-section-title"] }))
+  const eqStatusLabel = new Gtk.Label({ label: "", xalign: 1, cssClasses: ["ap-eq-status"] })
+  eqHeader.append(eqStatusLabel)
+  const eqFlow = new Gtk.FlowBox({
+    selectionMode: Gtk.SelectionMode.NONE,
+    columnSpacing: 4,
+    rowSpacing: 4,
+    maxChildrenPerLine: 4,
+    homogeneous: false,
+    cssClasses: ["ap-eq-row"],
+  })
+  const eqMsg = new Gtk.Label({ label: "", wrap: true, xalign: 0, maxWidthChars: 38, cssClasses: ["ap-eq-msg"], visible: false })
+  eqBox.append(eqHeader)
+  eqBox.append(eqFlow)
+  eqBox.append(eqMsg)
 
-  // Load EQ presets from config dir
-  const eqPresets = ["flat", "bass-boost", "vocal-clarity", "airpods-pro-crinacle"]
-  const eqBtns: { name: string; btn: Gtk.Button }[] = []
+  const eqBtns: { id: string; btn: Gtk.Button }[] = []
+  let eqKey = ""
 
-  for (const preset of eqPresets) {
-    const shortName = preset === "airpods-pro-crinacle" ? "Crinacle" :
-      preset.split("-").map(w => w[0].toUpperCase() + w.slice(1)).join(" ")
-    const btn = new Gtk.Button({ cssClasses: ["ap-eq-btn"], label: shortName })
-    btn.connect("clicked", () => {
-      if (state.eqPreset.toLowerCase().includes(preset)) {
-        call("DisableEq")
-      } else {
-        call("SetEqPreset", new GLib.Variant("(s)", [preset]))
-      }
-    })
-    eqBtns.push({ name: preset, btn })
-    eqBtnBox.append(btn)
+  function rebuildEqButtons() {
+    const key = eqPresets.map((p) => `${p.id}\u001f${p.name}`).join("\u001e")
+    if (key === eqKey) return
+    eqKey = key
+    clearBox(eqFlow)
+    eqBtns.length = 0
+    const items = [{ id: "", name: "Off", description: "Turn the equalizer off" }, ...eqPresets]
+    for (const preset of items) {
+      const btn = new Gtk.Button({
+        cssClasses: ["ap-eq-btn"],
+        label: preset.name || presetLabel(preset.id),
+        tooltipText: preset.description || null,
+      })
+      btn.connect("clicked", () => {
+        if (preset.id === "" || preset.id === state.eqPreset) call("DisableEq")
+        else call("SetEqPreset", new GLib.Variant("(s)", [preset.id]))
+      })
+      eqBtns.push({ id: preset.id, btn })
+      eqFlow.append(btn)
+    }
   }
 
   // ── Footer ──
@@ -223,14 +336,22 @@ export default function AirPodsBattery() {
 
   // Header
   const headerBox = new Gtk.Box({ spacing: 8, cssClasses: ["ap-header"] })
-  const headerIcon = new Gtk.Label({ label: "\uF025", cssClasses: ["ap-header-icon"] })
-  const headerTitle = new Gtk.Label({ label: "AirPods Pro", hexpand: true, xalign: 0, cssClasses: ["ap-header-title"] })
-  const headerStatus = new Gtk.Label({ label: "", cssClasses: ["ap-header-status"] })
+  const headerIcon = new Gtk.Label({ label: "", cssClasses: ["ap-header-icon"] })
+  const headerTitle = new Gtk.Label({ label: "AirPods", hexpand: true, xalign: 0, cssClasses: ["ap-header-title"] })
+  const headerStatus = new Gtk.Label({ label: "", xalign: 0, cssClasses: ["ap-header-status"] })
   headerBox.append(headerIcon)
   const headerText = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL })
   headerText.append(headerTitle)
   headerText.append(headerStatus)
   headerBox.append(headerText)
+
+  // ── Open App button ──
+  const openAppBtn = new Gtk.Button({ cssClasses: ["ap-open-app"], label: "Open AirPods Helper" })
+  openAppBtn.connect("clicked", () => {
+    execAsync("airpods-app").catch(() => {
+      execAsync(`bash -c '${GLib.get_home_dir()}/.local/bin/airpods-app &disown'`).catch(() => {})
+    })
+  })
 
   popupBox.append(headerBox)
   popupBox.append(batteryBox)
@@ -240,37 +361,29 @@ export default function AirPodsBattery() {
   popupBox.append(eqBox)
   popupBox.append(earBox)
   popupBox.append(footerLabel)
+  popupBox.append(openAppBtn)
 
   // ── Render function ──
   let updatingToggles = false
 
   function render() {
     const s = state
-
-    // Bar button
-    if (s.connected) {
-      const min = Math.min(
-        s.batteryLeft >= 0 ? s.batteryLeft : 999,
-        s.batteryRight >= 0 ? s.batteryRight : 999,
-      )
-      barLabel.label = min < 999 ? `\uF025 ${min}%` : "\uF025"
-    }
+    const has = (f: string) => s.features.includes(f)
+    const headphones = has("headphones")
 
     // Header
-    headerTitle.label = s.model || "AirPods"
-    headerStatus.label = s.ancMode === "off" ? "ANC Off" :
-      s.ancMode === "noise" ? "Noise Cancellation" :
-      s.ancMode === "transparency" ? "Transparency" :
-      s.ancMode === "adaptive" ? "Adaptive" : s.ancMode
+    headerTitle.label = s.modelName || s.model || "AirPods"
+    headerStatus.label = has("anc") ? (ANC_LABELS[s.ancMode] ?? s.ancMode) : "Connected"
 
-    // Battery
+    // Battery — over-ear models report one battery (mirrored in Left/Right).
     clearBox(batteryBox)
-    if (s.batteryLeft >= 0) batteryBox.append(makeBatRow("Left", s.batteryLeft, s.chargingLeft))
-    if (s.batteryRight >= 0) batteryBox.append(makeBatRow("Right", s.batteryRight, s.chargingRight))
-    if (s.batteryCase >= 0) batteryBox.append(makeBatRow("Case", s.batteryCase, s.chargingCase))
-
-    // Feature checks
-    const has = (f: string) => s.features.includes(f)
+    if (headphones) {
+      batteryBox.append(makeBatRow("Battery", Math.max(s.batteryLeft, s.batteryRight), s.chargingLeft || s.chargingRight))
+    } else {
+      batteryBox.append(makeBatRow("Left", s.batteryLeft, s.chargingLeft))
+      batteryBox.append(makeBatRow("Right", s.batteryRight, s.chargingRight))
+      batteryBox.append(makeBatRow("Case", s.batteryCase, s.chargingCase))
+    }
 
     // ANC buttons — only show if model supports ANC
     ancBox.visible = has("anc")
@@ -283,34 +396,54 @@ export default function AirPodsBattery() {
       }
     }
 
-    // Adaptive noise slider
+    // Adaptive noise slider (don't fight the user while a change is pending)
     noiseSliderBox.visible = has("adaptive") && s.ancMode === "adaptive"
-    if (noiseSliderBox.visible) {
+    if (noiseSliderBox.visible && sliderTimeout === null) {
+      updatingSlider = true
       noiseSlider.set_value(s.adaptiveNoiseLevel)
+      updatingSlider = false
     }
 
     // Toggles — only show relevant ones
     caRow.visible = has("ca")
     obRow.visible = has("one_bud_anc")
-    togglesBox.visible = has("ca") || has("one_bud_anc")
+    micRow.visible = !headphones
+    togglesBox.visible = caRow.visible || obRow.visible || micRow.visible
 
     updatingToggles = true
     if (has("ca")) caSwitch.active = s.conversationalAwareness
     if (has("one_bud_anc")) obSwitch.active = s.oneBudAnc
     updatingToggles = false
 
-    // EQ
-    for (const eq of eqBtns) {
-      const active = s.eqPreset.toLowerCase().includes(eq.name)
-      eq.btn.cssClasses = active ? ["ap-eq-btn", "active"] : ["ap-eq-btn"]
+    for (let i = 0; i < micModes.length; i++) {
+      const active = micModes[i].id === s.micMode
+      micBtns[i].cssClasses = active ? ["ap-eq-btn", "ap-mic-btn", "active"] : ["ap-eq-btn", "ap-mic-btn"]
     }
 
-    // Ears
-    earLeftLabel.label = `L: ${s.earLeft ? "\uF58F In" : "\uF58E Out"}`
-    earRightLabel.label = `R: ${s.earRight ? "\uF58F In" : "\uF58E Out"}`
+    // EQ — EqPreset is the preset id ("" = off)
+    rebuildEqButtons()
+    for (const eq of eqBtns) {
+      const active = eq.id === s.eqPreset
+      eq.btn.cssClasses = active ? ["ap-eq-btn", "active"] : ["ap-eq-btn"]
+      eq.btn.sensitive = s.eqStatus !== "unsupported" || eq.id === ""
+    }
+    eqStatusLabel.label = EQ_STATUS_LABELS[s.eqStatus] ?? s.eqStatus
+    eqStatusLabel.cssClasses = ["ap-eq-status", `ap-eq-${s.eqStatus}`]
+    let msg = ""
+    if (s.eqStatus === "error" || s.eqStatus === "unsupported") msg = s.eqError || "EQ unavailable"
+    else if (s.eqStatus === "waiting") msg = "Waiting for the AirPods audio output…"
+    eqMsg.label = msg
+    eqMsg.visible = msg !== ""
+    eqMsg.cssClasses = ["ap-eq-msg", `ap-eq-${s.eqStatus}`]
+
+    // Ears (no per-bud status on over-ear models)
+    earBox.visible = !headphones
+    earLeftLabel.label = `L: ${s.earLeft ? " In" : " Out"}`
+    earRightLabel.label = `R: ${s.earRight ? " In" : " Out"}`
 
     // Footer
-    footerLabel.label = s.firmware ? `${s.model}  ·  FW ${s.firmware}` : ""
+    footerLabel.label = s.firmware ? `${s.model}  ·  FW ${s.firmware}` : s.model
+    footerLabel.visible = footerLabel.label !== ""
   }
 
   // Block toggle signals during programmatic updates
@@ -323,7 +456,7 @@ export default function AirPodsBattery() {
   const popover = new Gtk.Popover()
   popover.set_child(popupBox)
   popover.connect("notify::visible", () => {
-    if (popover.visible) { _lockBar(); sync() }
+    if (popover.visible) { _lockBar(); sync(); loadPresets() }
     else _unlockBar()
   })
 
@@ -334,16 +467,23 @@ export default function AirPodsBattery() {
   })
   menuBtn.set_child(barLabel)
 
+  function lowestBattery(): number {
+    const s = state
+    if (s.features.includes("headphones")) return Math.max(s.batteryLeft, s.batteryRight)
+    const known = [s.batteryLeft, s.batteryRight].filter((v) => v >= 0)
+    return known.length ? Math.min(...known) : -1
+  }
+
   listeners.push(() => {
     menuBtn.visible = state.connected
-    const min = Math.min(
-      state.batteryLeft >= 0 ? state.batteryLeft : 999,
-      state.batteryRight >= 0 ? state.batteryRight : 999,
-    )
-    if (min <= 15) menuBtn.cssClasses = ["airpods-btn", "airpods-low"]
-    else if (min <= 30) menuBtn.cssClasses = ["airpods-btn", "airpods-warn"]
+    const min = lowestBattery()
+    barLabel.label = min >= 0 ? ` ${min}%` : ""
+    if (min >= 0 && min <= 15) menuBtn.cssClasses = ["airpods-btn", "airpods-low"]
+    else if (min >= 0 && min <= 30) menuBtn.cssClasses = ["airpods-btn", "airpods-warn"]
     else menuBtn.cssClasses = ["airpods-btn"]
   })
+  // Apply the bar label for the initial state too.
+  listeners[listeners.length - 1]()
 
   return menuBtn as Gtk.Widget
 }
