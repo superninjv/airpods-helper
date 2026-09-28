@@ -168,7 +168,7 @@ enum Command {
     Doctor,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -177,9 +177,9 @@ async fn main() -> anyhow::Result<()> {
         return cmd_doctor(cli.json).await;
     }
 
-    let conn = Connection::session().await.map_err(|e| {
-        anyhow::anyhow!("failed to connect to session bus: {e}")
-    })?;
+    let conn = Connection::session()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to connect to session bus: {e}"))?;
 
     let proxy = AirPodsProxy::new(&conn).await.map_err(|e| {
         anyhow::anyhow!("failed to create D-Bus proxy (is airpods-daemon running?): {e}")
@@ -218,7 +218,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Scan { duration } => {
             if !cli.json {
-                println!("scanning for nearby AirPods for {duration}s... (open a case to make AirPods discoverable)");
+                println!(
+                    "scanning for nearby AirPods for {duration}s... (open a case to make AirPods discoverable)"
+                );
             }
             let candidates = proxy.quick_pair_scan(duration).await?;
             if cli.json {
@@ -258,7 +260,10 @@ async fn main() -> anyhow::Result<()> {
                     .iter()
                     .map(|(a, n)| serde_json::json!({ "address": a, "name": n }))
                     .collect();
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "paired": arr }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "paired": arr }))?
+                );
             } else if devices.is_empty() {
                 println!("no paired AirPods");
             } else {
@@ -325,7 +330,11 @@ async fn cmd_status(proxy: &AirPodsProxy<'_>, json: bool) -> anyhow::Result<()> 
     let er = proxy.ear_right().await.unwrap_or(false);
     let eq = proxy.eq_preset().await.unwrap_or_default();
 
-    let display = if model_name.is_empty() { &model } else { &model_name };
+    let display = if model_name.is_empty() {
+        &model
+    } else {
+        &model_name
+    };
     println!("{display}  ({model})  FW {firmware}");
     println!();
     print_battery("Left ", bl, proxy.charging_left().await.unwrap_or(false));
@@ -350,7 +359,11 @@ async fn cmd_status(proxy: &AirPodsProxy<'_>, json: bool) -> anyhow::Result<()> 
         println!("1-Bud:  {}", if ob { "on" } else { "off" });
     }
 
-    println!("Ears:   L={} R={}", if el { "in" } else { "out" }, if er { "in" } else { "out" });
+    println!(
+        "Ears:   L={} R={}",
+        if el { "in" } else { "out" },
+        if er { "in" } else { "out" }
+    );
     if !eq.is_empty() {
         println!("EQ:     {eq}");
     }
@@ -400,7 +413,9 @@ async fn cmd_anc(proxy: &AirPodsProxy<'_>, mode: Option<String>, json: bool) -> 
                     proxy.set_anc_mode(&m).await?;
                     println!("ANC: {m}");
                 }
-                _ => anyhow::bail!("invalid ANC mode: {m} (use: off, noise, transparency, adaptive)"),
+                _ => {
+                    anyhow::bail!("invalid ANC mode: {m} (use: off, noise, transparency, adaptive)")
+                }
             }
         }
         None => {
@@ -415,12 +430,19 @@ async fn cmd_anc(proxy: &AirPodsProxy<'_>, mode: Option<String>, json: bool) -> 
     Ok(())
 }
 
-async fn cmd_ca(proxy: &AirPodsProxy<'_>, toggle: Option<String>, json: bool) -> anyhow::Result<()> {
+async fn cmd_ca(
+    proxy: &AirPodsProxy<'_>,
+    toggle: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
     match toggle {
         Some(t) => {
             let enabled = parse_toggle(&t)?;
             proxy.set_conversational_awareness(enabled).await?;
-            println!("conversational awareness: {}", if enabled { "on" } else { "off" });
+            println!(
+                "conversational awareness: {}",
+                if enabled { "on" } else { "off" }
+            );
         }
         None => {
             let ca = proxy.conversational_awareness().await?;
@@ -452,7 +474,11 @@ async fn cmd_noise(proxy: &AirPodsProxy<'_>, level: Option<u8>, json: bool) -> a
     Ok(())
 }
 
-async fn cmd_one_bud(proxy: &AirPodsProxy<'_>, toggle: Option<String>, json: bool) -> anyhow::Result<()> {
+async fn cmd_one_bud(
+    proxy: &AirPodsProxy<'_>,
+    toggle: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
     match toggle {
         Some(t) => {
             let enabled = parse_toggle(&t)?;
@@ -471,7 +497,11 @@ async fn cmd_one_bud(proxy: &AirPodsProxy<'_>, toggle: Option<String>, json: boo
     Ok(())
 }
 
-async fn cmd_eq(proxy: &AirPodsProxy<'_>, action: Option<String>, json: bool) -> anyhow::Result<()> {
+async fn cmd_eq(
+    proxy: &AirPodsProxy<'_>,
+    action: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
     match action.as_deref() {
         Some("list") => {
             let presets = proxy.list_eq_presets().await?;
@@ -527,7 +557,9 @@ async fn cmd_doctor(json: bool) -> anyhow::Result<()> {
 
     // 1. Daemon binary on PATH or in well-known locations
     let candidates = [
-        std::env::var("HOME").map(|h| format!("{h}/.local/bin/airpods-daemon")).ok(),
+        std::env::var("HOME")
+            .map(|h| format!("{h}/.local/bin/airpods-daemon"))
+            .ok(),
         Some("/usr/local/bin/airpods-daemon".to_string()),
         Some("/usr/bin/airpods-daemon".to_string()),
     ];
@@ -580,21 +612,19 @@ async fn cmd_doctor(json: bool) -> anyhow::Result<()> {
                 name: "L2CAP raw socket capability",
                 ok: false,
                 detail: "`getcap` not available — can't verify".into(),
-                fix: Some("Install libcap (Arch: `pacman -S libcap`, Debian: `apt install libcap2-bin`)".into()),
+                fix: Some(
+                    "Install libcap (Arch: `pacman -S libcap`, Debian: `apt install libcap2-bin`)"
+                        .into(),
+                ),
             }),
         }
     }
 
     // 3. BlueZ available on system bus
     let bluez_ok = match zbus::Connection::system().await {
-        Ok(c) => zbus::Proxy::new(
-            &c,
-            "org.bluez",
-            "/org/bluez",
-            "org.freedesktop.DBus.Peer",
-        )
-        .await
-        .is_ok(),
+        Ok(c) => zbus::Proxy::new(&c, "org.bluez", "/org/bluez", "org.freedesktop.DBus.Peer")
+            .await
+            .is_ok(),
         Err(_) => false,
     };
     checks.push(Check {
@@ -728,7 +758,10 @@ async fn cmd_doctor(json: bool) -> anyhow::Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "checks": arr }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "checks": arr }))?
+        );
         return Ok(());
     }
 

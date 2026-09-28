@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "aap"
+version = "0.3.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15,6 +23,7 @@ dependencies = [
 name = "airpods-windows"
 version = "0.3.0-rc.1"
 dependencies = [
+ "aap",
  "anyhow",
  "axum",
  "btleplug",

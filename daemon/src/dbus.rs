@@ -9,11 +9,11 @@ use zbus::object_server::{Interface, InterfaceRef, SignalEmitter};
 use zbus::zvariant::Value;
 use zbus::{Connection, fdo, interface};
 
-use crate::aap::{AncMode, MicMode};
 use crate::config::{self, SharedConfig};
 use crate::eq::{EqBand, EqPreset, FilterType, PresetError, Source};
 use crate::l2cap::L2capCommand;
 use crate::state::{AirPodsState, SharedState};
+use aap::{AncMode, MicMode};
 
 pub const OBJECT_PATH: &str = "/org/costa/AirPods";
 pub const BUS_NAME: &str = "org.costa.AirPods";
@@ -281,7 +281,7 @@ impl AirPodsInterface {
     // ─── Controls ─────────────────────────────────────────────────────
 
     async fn set_anc_mode(&self, mode: &str) -> fdo::Result<()> {
-        let anc_mode = AncMode::from_str(mode)
+        let anc_mode = AncMode::parse(mode)
             .ok_or_else(|| fdo::Error::InvalidArgs(format!("invalid ANC mode: {mode}")))?;
         self.send_cmd(L2capCommand::SetAncMode(anc_mode)).await
     }
@@ -309,7 +309,7 @@ impl AirPodsInterface {
 
     /// Set which bud is the primary microphone. Accepts "auto", "right", "left".
     async fn set_mic_mode(&self, mode: &str) -> fdo::Result<()> {
-        let mic_mode = MicMode::from_str(mode)
+        let mic_mode = MicMode::parse(mode)
             .ok_or_else(|| fdo::Error::InvalidArgs(format!("invalid mic mode: {mode}")))?;
         self.send_cmd(L2capCommand::SetMicMode(mic_mode)).await
     }

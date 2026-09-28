@@ -349,7 +349,7 @@ pub async fn quick_pair_scan(duration_secs: u32) -> bluer::Result<Vec<QuickPairC
             let Ok(Some(mfd)) = device.manufacturer_data().await else {
                 continue;
             };
-            let Some(payload) = mfd.get(&crate::aap::APPLE_COMPANY_ID) else {
+            let Some(payload) = mfd.get(&aap::APPLE_COMPANY_ID) else {
                 continue;
             };
             if let Some((model_hint, in_pair_mode)) = parse_apple_proximity(payload) {
@@ -404,7 +404,7 @@ async fn is_airpods(device: &Device) -> bool {
     // Check by service UUID
     if let Ok(Some(uuids)) = device.uuids().await {
         for uuid in &uuids {
-            if uuid.to_string() == crate::aap::AIRPODS_SERVICE_UUID {
+            if uuid.to_string() == aap::AIRPODS_SERVICE_UUID {
                 return true;
             }
         }
