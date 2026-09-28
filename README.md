@@ -1,6 +1,5 @@
 # airpods-helper
 
-[![CI](https://github.com/superninjv/airpods-helper/actions/workflows/ci.yml/badge.svg)](https://github.com/superninjv/airpods-helper/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/superninjv/airpods-helper)](https://github.com/superninjv/airpods-helper/releases)
 
