@@ -418,12 +418,17 @@
     return (S && S.eq_presets.find((p) => p.id === id)) || null;
   }
 
+  const presetFailed = new Set(); // ids whose details couldn't be read
+
   async function loadPreset(id, force) {
-    if (!id || (!force && presetCache.has(id)) || presetFetch === id) return;
+    if (!id || presetFetch === id) return;
+    if (!force && (presetCache.has(id) || presetFailed.has(id))) return;
     presetFetch = id;
     try {
       presetCache.set(id, await invoke("get_eq_preset", { id }));
+      presetFailed.delete(id);
     } catch (e) {
+      presetFailed.add(id);
       console.warn("get_eq_preset failed", e);
     } finally {
       presetFetch = null;
@@ -506,7 +511,9 @@
         `to ${fmtDb(max[1])} at ${Eq.formatHz(max[0])}`);
     } else {
       Eq.plot(svg, null, { muted: true });
-      caption.textContent = s.eq_preset ? "Loading preset…" : "EQ off — flat response";
+      caption.textContent = !s.eq_preset
+        ? "EQ off — flat response"
+        : presetFailed.has(s.eq_preset) ? "Couldn't read this preset's bands" : "Loading preset…";
       svg.setAttribute("aria-label", "Flat frequency response (EQ off)");
     }
 
