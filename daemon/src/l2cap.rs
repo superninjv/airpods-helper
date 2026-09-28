@@ -1,24 +1,23 @@
-use bluer::l2cap::{SeqPacket, Socket, SocketAddr};
 use bluer::Address;
+use bluer::l2cap::{SeqPacket, Socket, SocketAddr};
 use std::io;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::aap;
-use crate::aap::parser::{self, AapEvent, AudioSource};
-use crate::models;
 use crate::state::SharedState;
+use aap::models;
+use aap::parser::{self, AapEvent, AudioSource};
 
 /// Commands that can be sent to the AirPods over L2CAP
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)] // every command is a "Set…"
 pub enum L2capCommand {
     SetAncMode(aap::AncMode),
     SetConversationalAwareness(bool),
     SetAdaptiveNoiseLevel(u8),
     SetOneBudAnc(bool),
+    SetVolumeSwipe(bool),
     SetMicMode(aap::MicMode),
-    #[allow(dead_code)] // wired in match arm, constructed by future CLI disconnect command
-    Disconnect,
 }
 
 /// Connect to AirPods via L2CAP and run the read/write loop
@@ -28,9 +27,11 @@ pub async fn run(
     mut cmd_rx: mpsc::Receiver<L2capCommand>,
     event_tx: mpsc::Sender<AapEvent>,
 ) -> io::Result<()> {
+    // The caller resets state and announces the disconnect when we return.
     info!(
         "connecting to AirPods at {} on PSM 0x{:04X}",
-        address, aap::AAP_PSM
+        address,
+        aap::AAP_PSM
     );
 
     // Retry L2CAP connect — the channel may not be ready immediately after BT connect
@@ -77,7 +78,7 @@ pub async fn run(
     debug!("sent handshake");
 
     let mut buf = vec![0u8; 1024];
-    let n = seq.recv(&mut buf).await?;
+    let n = recv_timeout(&seq, &mut buf).await?;
     match parser::parse(&buf[..n]) {
         Ok(AapEvent::HandshakeAck) => debug!("handshake ACK received"),
         Ok(other) => warn!("unexpected response to handshake: {other:?}"),
@@ -87,7 +88,7 @@ pub async fn run(
     seq.send(&aap::commands::SET_FEATURES).await?;
     debug!("sent feature enable");
 
-    let n = seq.recv(&mut buf).await?;
+    let n = recv_timeout(&seq, &mut buf).await?;
     match parser::parse(&buf[..n]) {
         Ok(AapEvent::FeaturesAck) => debug!("features ACK received"),
         Ok(other) => warn!("unexpected response to features: {other:?}"),
@@ -103,8 +104,12 @@ pub async fn run(
     seq.send(&aap::commands::ENABLE_ALL_LISTENING_MODES).await?;
     debug!("sent enable all listening modes");
 
-    state.update(|s| s.connected = true);
+    state.update(|s| {
+        s.connected = true;
+        s.address = address.to_string();
+    });
     info!("handshake complete, entering main loop");
+    let mut buds = aap::BudTracker::default();
 
     // Main read/write loop
     loop {
@@ -123,7 +128,7 @@ pub async fn run(
                                 break;
                             }
                             Ok(event) => {
-                                apply_event(&state, &event);
+                                apply_event(&state, &mut buds, &event);
                                 let _ = event_tx.send(event).await;
                             }
                             Err(e) => {
@@ -180,15 +185,26 @@ pub async fn run(
                             error!("failed to send one-bud ANC command: {e}");
                         }
                     }
+                    Some(L2capCommand::SetVolumeSwipe(enabled)) => {
+                        let pkt = aap::commands::set_volume_swipe(enabled);
+                        if let Err(e) = seq.send(&pkt).await {
+                            error!("failed to send volume swipe command: {e}");
+                        } else {
+                            // The firmware doesn't always echo this one back.
+                            state.update(|s| s.volume_swipe = enabled);
+                        }
+                    }
                     Some(L2capCommand::SetMicMode(mode)) => {
                         let pkt = aap::commands::set_mic_mode(mode);
                         debug!("sending mic mode {:?}: {:02X?}", mode, pkt);
                         if let Err(e) = seq.send(&pkt).await {
                             error!("failed to send mic mode command: {e}");
+                        } else {
+                            state.update(|s| s.mic_mode = mode.as_str().to_string());
                         }
                     }
-                    Some(L2capCommand::Disconnect) | None => {
-                        info!("disconnect requested");
+                    None => {
+                        info!("session closed by daemon");
                         break;
                     }
                 }
@@ -196,49 +212,48 @@ pub async fn run(
         }
     }
 
-    state.reset();
     info!("L2CAP disconnected");
     Ok(())
 }
 
 /// Apply a parsed AAP event to the shared state
-fn apply_event(state: &SharedState, event: &AapEvent) {
+fn apply_event(state: &SharedState, buds: &mut aap::BudTracker, event: &AapEvent) {
     match event {
         AapEvent::Battery(b) => {
+            if let Some((l, r)) = buds.on_battery(b) {
+                state.update(|s| (s.ear_left, s.ear_right) = (l, r));
+            }
             state.update(|s| {
                 if let Some(left) = &b.left {
-                    s.battery_left = left.level as i32;
-                    s.charging_left = left.charging;
+                    s.battery_left = left.display_level();
+                    s.charging_left = left.connected && left.charging;
                 }
                 if let Some(right) = &b.right {
-                    s.battery_right = right.level as i32;
-                    s.charging_right = right.charging;
+                    s.battery_right = right.display_level();
+                    s.charging_right = right.connected && right.charging;
                 }
                 if let Some(case) = &b.case {
-                    // Only update case battery if it's a real reading (case is open/charging)
-                    // When case closes, AirPods report 0% — preserve the last known value
-                    if case.level > 0 || case.charging {
-                        s.battery_case = case.level as i32;
+                    // Buds report the case at 0% once the lid closes; keep the
+                    // last real reading rather than flashing 0%.
+                    if case.connected && (case.level > 0 || case.charging) {
+                        s.battery_case = case.level.min(100) as i32;
                         s.charging_case = case.charging;
                     }
                 }
             });
         }
+        AapEvent::EarDetection(ed) => {
+            let (l, r) = buds.on_ear(*ed);
+            state.update(|s| (s.ear_left, s.ear_right) = (l, r));
+        }
         AapEvent::AncMode(mode) => {
             state.update(|s| s.anc_mode = *mode);
-        }
-        AapEvent::EarDetection(ed) => {
-            // AAP primary = right bud (controller), secondary = left
-            state.update(|s| {
-                s.ear_left = ed.secondary.is_in_ear();
-                s.ear_right = ed.primary.is_in_ear();
-            });
         }
         AapEvent::ConversationalAwareness(enabled) => {
             state.update(|s| s.conversational_awareness = *enabled);
         }
         AapEvent::ConversationalActivity(activity) => {
-            use crate::aap::parser::CaActivity;
+            use aap::parser::CaActivity;
             let value = match activity {
                 CaActivity::Speaking => "speaking",
                 CaActivity::Stopped => "stopped",
@@ -257,6 +272,9 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
         }
         AapEvent::AdaptiveVolume(enabled) => {
             state.update(|s| s.adaptive_volume = *enabled);
+        }
+        AapEvent::MicMode(mode) => {
+            state.update(|s| s.mic_mode = mode.as_str().to_string());
         }
         AapEvent::ChimeVolume(level) => {
             state.update(|s| s.chime_volume = *level);
@@ -285,4 +303,12 @@ fn apply_event(state: &SharedState, event: &AapEvent) {
         }
         _ => {}
     }
+}
+
+/// Handshake replies should arrive within milliseconds; if they don't, give
+/// up rather than holding the session (and the device) forever.
+async fn recv_timeout(seq: &SeqPacket, buf: &mut [u8]) -> io::Result<usize> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), seq.recv(buf))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "AirPods didn't answer the handshake"))?
 }

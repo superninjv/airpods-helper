@@ -17,14 +17,14 @@ pub fn model_features(model_number: &str) -> Vec<&'static str> {
         // AirPods Pro 1 — ANC but no adaptive/CA/one-bud
         "A2083" | "A2084" | "A2190" => vec!["anc"],
         // AirPods Pro 2 (Lightning + USB-C)
-        "A2698" | "A2699" | "A2700" | "A2931"
-        | "A2968" | "A3047" | "A3048" | "A3049" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
+        "A2698" | "A2699" | "A2700" | "A2931" | "A2968" | "A3047" | "A3048" | "A3049" => {
+            vec!["anc", "adaptive", "ca", "one_bud_anc"]
+        }
         // AirPods Pro 3
         "A3063" | "A3064" | "A3065" | "A3122" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
-        // AirPods Max (Lightning) — ANC but no adaptive/CA
-        "A2096" => vec!["anc"],
-        // AirPods Max 2 (USB-C) — ANC + adaptive + CA, no one-bud (single unit)
-        "A3184" => vec!["anc", "adaptive", "ca"],
+        // AirPods Max (Lightning, 2020) and AirPods Max (USB-C, 2024) — both
+        // H1: ANC only. Over-ear: one battery, no case, no per-bud ear status.
+        "A2096" | "A3184" => vec!["anc", "headphones"],
         // Unknown model — expose everything, let firmware decide
         _ => vec!["anc", "adaptive", "ca", "one_bud_anc"],
     }
@@ -54,10 +54,10 @@ pub fn model_display_name(model_number: &str) -> &str {
         "A2083" | "A2084" | "A2190" => "AirPods Pro",
 
         // AirPods Pro 2 (Lightning)
-        "A2698" | "A2699" | "A2700" | "A2931" => "AirPods Pro 2",
+        "A2698" | "A2699" | "A2700" | "A2931" => "AirPods Pro 2 (Lightning)",
 
         // AirPods Pro 2 (USB-C)
-        "A2968" | "A3047" | "A3048" | "A3049" => "AirPods Pro 2",
+        "A2968" | "A3047" | "A3048" | "A3049" => "AirPods Pro 2 (USB-C)",
 
         // AirPods Pro 3
         "A3063" | "A3064" | "A3065" | "A3122" => "AirPods Pro 3",
@@ -65,8 +65,8 @@ pub fn model_display_name(model_number: &str) -> &str {
         // AirPods Max (Lightning)
         "A2096" => "AirPods Max",
 
-        // AirPods Max (USB-C)
-        "A3184" => "AirPods Max 2",
+        // AirPods Max (USB-C, 2024)
+        "A3184" => "AirPods Max (USB-C)",
 
         // Charging cases (standalone, without earbuds context)
         "A1602" | "A1938" => "AirPods Case",
@@ -82,16 +82,16 @@ mod tests {
 
     #[test]
     fn test_known_models() {
-        assert_eq!(model_display_name("A2698"), "AirPods Pro 2");
-        assert_eq!(model_display_name("A2699"), "AirPods Pro 2");
-        assert_eq!(model_display_name("A3047"), "AirPods Pro 2");
-        assert_eq!(model_display_name("A3048"), "AirPods Pro 2");
+        assert_eq!(model_display_name("A2698"), "AirPods Pro 2 (Lightning)");
+        assert_eq!(model_display_name("A2699"), "AirPods Pro 2 (Lightning)");
+        assert_eq!(model_display_name("A3047"), "AirPods Pro 2 (USB-C)");
+        assert_eq!(model_display_name("A3048"), "AirPods Pro 2 (USB-C)");
         assert_eq!(model_display_name("A2084"), "AirPods Pro");
         assert_eq!(model_display_name("A2564"), "AirPods 3");
         assert_eq!(model_display_name("A3055"), "AirPods 4 ANC");
         assert_eq!(model_display_name("A3050"), "AirPods 4");
         assert_eq!(model_display_name("A2096"), "AirPods Max");
-        assert_eq!(model_display_name("A3184"), "AirPods Max 2");
+        assert_eq!(model_display_name("A3184"), "AirPods Max (USB-C)");
         assert_eq!(model_display_name("A3063"), "AirPods Pro 3");
     }
 
@@ -130,11 +130,14 @@ mod tests {
     }
 
     #[test]
-    fn test_features_max2_no_one_bud() {
-        let f = model_features("A3184");
-        assert!(f.contains(&"anc"));
-        assert!(f.contains(&"ca"));
-        assert!(!f.contains(&"one_bud_anc"));
+    fn test_features_max_is_headphones() {
+        for model in ["A2096", "A3184"] {
+            let f = model_features(model);
+            assert!(f.contains(&"anc"));
+            assert!(f.contains(&"headphones"));
+            assert!(!f.contains(&"ca"));
+            assert!(!f.contains(&"one_bud_anc"));
+        }
     }
 
     #[test]

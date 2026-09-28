@@ -1,0 +1,11 @@
+[package]
+name = "aap"
+version = "0.3.0"
+edition = "2024"
+description = "Apple Accessory Protocol (AirPods) packet parsing and building"
+license = "MIT"
+publish = false
+
+[dependencies]
+thiserror = "2"
+tracing = "0.1"

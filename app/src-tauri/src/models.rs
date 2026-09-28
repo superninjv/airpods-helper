@@ -1,4 +1,8 @@
-/// Feature capabilities that vary by AirPods model.
+//! Model tables for the Windows HTTP bridge, whose `/status` does not report
+//! a feature list. (On Linux the daemon exposes `Features`/`ModelName`.)
+
+/// Feature capabilities that vary by AirPods model (same vocabulary as the
+/// D-Bus `Features` property).
 pub fn model_features(model_number: &str) -> Vec<&'static str> {
     match model_number {
         "A1523" | "A1722" => vec![],
@@ -7,11 +11,12 @@ pub fn model_features(model_number: &str) -> Vec<&'static str> {
         "A3050" | "A3053" | "A3054" | "A3058" => vec![],
         "A3055" | "A3056" | "A3057" | "A3059" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
         "A2083" | "A2084" | "A2190" => vec!["anc"],
-        "A2698" | "A2699" | "A2700" | "A2931"
-        | "A2968" | "A3047" | "A3048" | "A3049" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
+        "A2698" | "A2699" | "A2700" | "A2931" | "A2968" | "A3047" | "A3048" | "A3049" => {
+            vec!["anc", "adaptive", "ca", "one_bud_anc"]
+        }
         "A3063" | "A3064" | "A3065" | "A3122" => vec!["anc", "adaptive", "ca", "one_bud_anc"],
-        "A2096" => vec!["anc"],
-        "A3184" => vec!["anc", "adaptive", "ca"],
+        "A2096" => vec!["anc", "headphones"],
+        "A3184" => vec!["anc", "adaptive", "ca", "headphones"],
         _ => vec!["anc", "adaptive", "ca", "one_bud_anc"],
     }
 }

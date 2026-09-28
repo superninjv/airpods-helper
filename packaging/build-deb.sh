@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
-VERSION="0.2.2"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' daemon/Cargo.toml | head -1)"
 PKGNAME="airpods-helper"
 ARCH="amd64"
 STAGING="$PKGNAME-${VERSION}_${ARCH}"
 
-cd "$(dirname "$0")/.."
 
 # Build
 cargo build --workspace --release
@@ -17,7 +17,6 @@ mkdir -p "packaging/$STAGING/DEBIAN"
 mkdir -p "packaging/$STAGING/usr/bin"
 mkdir -p "packaging/$STAGING/usr/lib/systemd/user"
 mkdir -p "packaging/$STAGING/usr/share/dbus-1/services"
-mkdir -p "packaging/$STAGING/usr/share/airpods-helper/eq-presets"
 mkdir -p "packaging/$STAGING/usr/share/doc/airpods-helper"
 mkdir -p "packaging/$STAGING/usr/share/licenses/airpods-helper"
 
@@ -33,9 +32,6 @@ sed 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \
 sed 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \
     daemon/org.costa.AirPods.service > "packaging/$STAGING/usr/share/dbus-1/services/org.costa.AirPods.service"
 
-# EQ presets
-cp eq-presets/*.toml "packaging/$STAGING/usr/share/airpods-helper/eq-presets/"
-
 # Docs
 cp config.example.toml "packaging/$STAGING/usr/share/doc/airpods-helper/"
 cp LICENSE "packaging/$STAGING/usr/share/licenses/airpods-helper/"
@@ -49,10 +45,12 @@ Priority: optional
 Architecture: $ARCH
 Depends: bluez, dbus, libcap2-bin
 Recommends: pipewire, wireplumber
+Suggests: pulseaudio-utils
 Maintainer: Jack Hernandez <jack@synoros.io>
 Description: Native AirPods support for Linux
  ANC control, battery levels, ear detection with MPRIS auto-pause,
- parametric EQ via PipeWire, auto-reconnect, CLI tool, and D-Bus interface.
+ parametric EQ (PipeWire or PulseAudio), auto-reconnect, CLI tool and
+ D-Bus interface.
 Homepage: https://github.com/superninjv/airpods-helper
 EOF
 

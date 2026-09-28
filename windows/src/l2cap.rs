@@ -21,10 +21,9 @@ use tokio::sync::mpsc;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
 
-use crate::aap;
-#[allow(unused_imports)]
-use crate::aap::parser::{self, AapEvent, AudioSource, CaActivity};
 use crate::state::SharedState;
+#[allow(unused_imports)]
+use aap::parser::{self, AapEvent, AudioSource, CaActivity};
 
 /// Commands that can be sent to the AirPods over L2CAP
 #[derive(Debug)]
@@ -79,12 +78,10 @@ impl BtAddr {
 mod win {
     use super::*;
     use std::mem;
-    use windows::Win32::Devices::Bluetooth::{
-        AF_BTH, BTHPROTO_L2CAP, SOCKADDR_BTH,
-    };
+    use windows::Win32::Devices::Bluetooth::{AF_BTH, BTHPROTO_L2CAP, SOCKADDR_BTH};
     use windows::Win32::Networking::WinSock::{
-        closesocket, connect, recv, send, socket, WSACleanup, WSAStartup, SEND_RECV_FLAGS,
-        SOCK_STREAM, SOCKET, WSADATA,
+        SEND_RECV_FLAGS, SOCK_STREAM, SOCKET, WSACleanup, WSADATA, WSAStartup, closesocket,
+        connect, recv, send, socket,
     };
 
     /// Initialize Winsock
@@ -158,7 +155,8 @@ mod win {
     ) -> io::Result<()> {
         info!(
             "connecting to AirPods at {} on PSM 0x{:04X} via Winsock",
-            address, aap::AAP_PSM
+            address,
+            aap::AAP_PSM
         );
 
         wsa_init()?;
@@ -179,7 +177,7 @@ mod win {
             Err(last_err.unwrap())
         })
         .await
-        .map_err(|e| io::Error::other(e))??;
+        .map_err(io::Error::other)??;
 
         info!("L2CAP connected via Winsock, performing handshake");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -188,7 +186,7 @@ mod win {
         let sock_clone = sock;
         tokio::task::spawn_blocking(move || bt_send(sock_clone, &aap::commands::HANDSHAKE))
             .await
-            .map_err(|e| io::Error::other(e))??;
+            .map_err(io::Error::other)??;
         debug!("sent handshake");
 
         let sock_clone = sock;
@@ -198,7 +196,7 @@ mod win {
             Ok::<_, io::Error>(buf[..n].to_vec())
         })
         .await
-        .map_err(|e| io::Error::other(e))??;
+        .map_err(io::Error::other)??;
 
         match parser::parse(&ack) {
             Ok(AapEvent::HandshakeAck) => debug!("handshake ACK received"),
@@ -209,7 +207,7 @@ mod win {
         let sock_clone = sock;
         tokio::task::spawn_blocking(move || bt_send(sock_clone, &aap::commands::SET_FEATURES))
             .await
-            .map_err(|e| io::Error::other(e))??;
+            .map_err(io::Error::other)??;
         debug!("sent feature enable");
 
         let sock_clone = sock;
@@ -219,7 +217,7 @@ mod win {
             Ok::<_, io::Error>(buf[..n].to_vec())
         })
         .await
-        .map_err(|e| io::Error::other(e))??;
+        .map_err(io::Error::other)??;
 
         match parser::parse(&features_ack) {
             Ok(AapEvent::FeaturesAck) => debug!("features ACK received"),
@@ -232,7 +230,7 @@ mod win {
             bt_send(sock_clone, &aap::commands::SUBSCRIBE_NOTIFICATIONS)
         })
         .await
-        .map_err(|e| io::Error::other(e))??;
+        .map_err(io::Error::other)??;
         debug!("sent notification subscribe");
 
         // Enable all listening modes (Off + Noise + Transparency + Adaptive)
@@ -241,7 +239,7 @@ mod win {
             bt_send(sock_clone, &aap::commands::ENABLE_ALL_LISTENING_MODES)
         })
         .await
-        .map_err(|e| io::Error::other(e))??;
+        .map_err(io::Error::other)??;
         debug!("enabled all listening modes");
 
         state.update(|s| s.connected = true);
@@ -269,6 +267,7 @@ mod win {
             }
         });
 
+        let mut buds = aap::BudTracker::default();
         loop {
             tokio::select! {
                 Some(data) = read_rx.recv() => {
@@ -278,7 +277,7 @@ mod win {
                             break;
                         }
                         Ok(event) => {
-                            apply_event(&state, &event);
+                            apply_event(&state, &mut buds, &event);
                             let _ = event_tx.send(event).await;
                         }
                         Err(e) => {
@@ -413,17 +412,20 @@ fn model_display_name(model_number: &str) -> &str {
 
 /// Apply a parsed AAP event to the shared state
 #[allow(dead_code)]
-pub fn apply_event(state: &SharedState, event: &AapEvent) {
+pub fn apply_event(state: &SharedState, buds: &mut aap::BudTracker, event: &AapEvent) {
     match event {
         AapEvent::Battery(b) => {
+            if let Some((l, r)) = buds.on_battery(b) {
+                state.update(|s| (s.ear_left, s.ear_right) = (l, r));
+            }
             state.update(|s| {
                 if let Some(left) = &b.left {
-                    s.battery_left = left.level as i32;
-                    s.charging_left = left.charging;
+                    s.battery_left = left.display_level();
+                    s.charging_left = left.connected && left.charging;
                 }
                 if let Some(right) = &b.right {
-                    s.battery_right = right.level as i32;
-                    s.charging_right = right.charging;
+                    s.battery_right = right.display_level();
+                    s.charging_right = right.connected && right.charging;
                 }
                 if let Some(case) = &b.case
                     && (case.level > 0 || case.charging)
@@ -437,11 +439,8 @@ pub fn apply_event(state: &SharedState, event: &AapEvent) {
             state.update(|s| s.anc_mode = *mode);
         }
         AapEvent::EarDetection(ed) => {
-            // AAP primary = right bud (controller), secondary = left
-            state.update(|s| {
-                s.ear_left = ed.secondary.is_in_ear();
-                s.ear_right = ed.primary.is_in_ear();
-            });
+            let (l, r) = buds.on_ear(*ed);
+            state.update(|s| (s.ear_left, s.ear_right) = (l, r));
         }
         AapEvent::ConversationalAwareness(enabled) => {
             state.update(|s| s.conversational_awareness = *enabled);
