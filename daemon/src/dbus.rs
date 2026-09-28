@@ -1,253 +1,372 @@
+//! `org.costa.AirPods` D-Bus service. See `docs/dbus-api.md` for the contract.
+
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
-use tracing::info;
-use zbus::{interface, object_server::SignalEmitter, Connection};
+use tokio::sync::{Mutex, mpsc, watch};
+use tracing::{info, warn};
+use zbus::object_server::{Interface, InterfaceRef, SignalEmitter};
+use zbus::zvariant::Value;
+use zbus::{Connection, fdo, interface};
 
 use crate::aap::{AncMode, MicMode};
-use crate::eq::{EqCommand, EqPreset};
+use crate::config::{self, SharedConfig};
+use crate::eq::{EqBand, EqPreset, FilterType, PresetError, Source};
 use crate::l2cap::L2capCommand;
-use crate::state::SharedState;
+use crate::state::{AirPodsState, SharedState};
+
+pub const OBJECT_PATH: &str = "/org/costa/AirPods";
+pub const BUS_NAME: &str = "org.costa.AirPods";
 
 /// Shared handle to the active L2CAP command sender (swapped per session)
 pub type SharedCmdTx = Arc<Mutex<Option<mpsc::Sender<L2capCommand>>>>;
 
-/// D-Bus service exposing AirPods state on org.costa.AirPods
+/// Requests from D-Bus clients that the main loop handles.
+#[derive(Debug)]
+pub enum Control {
+    Reconnect,
+    /// The user explicitly disconnected — don't auto-reconnect.
+    UserDisconnected,
+    /// Select an EQ preset by id, or `None` to disable EQ.
+    EqSelect(Option<String>),
+    /// A preset file changed on disk; re-apply if it's the active one.
+    EqPresetChanged(String),
+}
+
 pub struct AirPodsInterface {
     state: SharedState,
+    config: SharedConfig,
     cmd_tx: SharedCmdTx,
-    reconnect_tx: mpsc::Sender<()>,
-    eq_tx: mpsc::Sender<EqCommand>,
+    control: mpsc::Sender<Control>,
 }
 
-impl AirPodsInterface {
-    pub fn new(
-        state: SharedState,
-        cmd_tx: SharedCmdTx,
-        reconnect_tx: mpsc::Sender<()>,
-        eq_tx: mpsc::Sender<EqCommand>,
-    ) -> Self {
-        Self {
-            state,
-            cmd_tx,
-            reconnect_tx,
-            eq_tx,
+fn failed(msg: impl std::fmt::Display) -> fdo::Error {
+    fdo::Error::Failed(msg.to_string())
+}
+
+fn preset_error(e: PresetError) -> fdo::Error {
+    match e {
+        PresetError::InvalidId(_) | PresetError::Invalid(_) => {
+            fdo::Error::InvalidArgs(e.to_string())
         }
+        _ => failed(e),
     }
 }
 
 impl AirPodsInterface {
-    async fn send_cmd(&self, cmd: L2capCommand) -> zbus::fdo::Result<()> {
+    async fn send_cmd(&self, cmd: L2capCommand) -> fdo::Result<()> {
         let guard = self.cmd_tx.lock().await;
-        let tx = guard.as_ref()
-            .ok_or_else(|| zbus::fdo::Error::Failed("not connected".into()))?;
-        tx.send(cmd).await
-            .map_err(|_| zbus::fdo::Error::Failed("L2CAP session ended".into()))?;
-        Ok(())
+        let tx = guard.as_ref().ok_or_else(|| failed("not connected"))?;
+        tx.send(cmd)
+            .await
+            .map_err(|_| failed("AirPods session ended"))
     }
+
+    async fn control(&self, msg: Control) -> fdo::Result<()> {
+        self.control
+            .send(msg)
+            .await
+            .map_err(|_| failed("daemon is shutting down"))
+    }
+
+    fn s(&self) -> AirPodsState {
+        self.state.current()
+    }
+
+    fn save_setting(&self, f: impl FnOnce(&mut config::Config)) -> fdo::Result<()> {
+        config::update_config(&self.config, f)
+            .map_err(|e| failed(format!("failed to save config: {e}")))
+    }
+}
+
+type Band = (String, f64, f64, f64);
+
+fn bands_from_wire(bands: Vec<Band>) -> fdo::Result<Vec<EqBand>> {
+    bands
+        .into_iter()
+        .enumerate()
+        .map(|(i, (ty, freq, q, gain))| {
+            let filter_type = FilterType::parse(&ty.to_ascii_lowercase()).ok_or_else(|| {
+                fdo::Error::InvalidArgs(format!("band {}: unknown filter type '{ty}'", i + 1))
+            })?;
+            Ok(EqBand {
+                filter_type,
+                freq,
+                q,
+                gain,
+            })
+        })
+        .collect()
 }
 
 #[interface(name = "org.costa.AirPods")]
 impl AirPodsInterface {
-    // --- Properties ---
+    // ─── Device properties ────────────────────────────────────────────
 
     #[zbus(property)]
     fn connected(&self) -> bool {
-        self.state.current().connected
+        self.s().connected
     }
-
     #[zbus(property)]
-    fn battery_left(&self) -> i32 {
-        self.state.current().battery_left
+    fn address(&self) -> String {
+        self.s().address
     }
-
-    #[zbus(property)]
-    fn battery_right(&self) -> i32 {
-        self.state.current().battery_right
-    }
-
-    #[zbus(property)]
-    fn battery_case(&self) -> i32 {
-        self.state.current().battery_case
-    }
-
-    #[zbus(property)]
-    fn charging_left(&self) -> bool {
-        self.state.current().charging_left
-    }
-
-    #[zbus(property)]
-    fn charging_right(&self) -> bool {
-        self.state.current().charging_right
-    }
-
-    #[zbus(property)]
-    fn charging_case(&self) -> bool {
-        self.state.current().charging_case
-    }
-
-    #[zbus(property)]
-    fn anc_mode(&self) -> String {
-        self.state.current().anc_mode.as_str().to_string()
-    }
-
-    #[zbus(property)]
-    fn ear_left(&self) -> bool {
-        self.state.current().ear_left
-    }
-
-    #[zbus(property)]
-    fn ear_right(&self) -> bool {
-        self.state.current().ear_right
-    }
-
-    #[zbus(property)]
-    fn conversational_awareness(&self) -> bool {
-        self.state.current().conversational_awareness
-    }
-
-    #[zbus(property)]
-    fn adaptive_noise_level(&self) -> u8 {
-        self.state.current().adaptive_noise_level
-    }
-
-    #[zbus(property)]
-    fn one_bud_anc(&self) -> bool {
-        self.state.current().one_bud_anc
-    }
-
     #[zbus(property)]
     fn model(&self) -> String {
-        self.state.current().model.clone()
+        self.s().model
     }
-
     #[zbus(property)]
     fn model_name(&self) -> String {
-        self.state.current().model_name.clone()
+        self.s().model_name
     }
-
     #[zbus(property)]
     fn firmware(&self) -> String {
-        self.state.current().firmware.clone()
+        self.s().firmware
     }
-
     #[zbus(property)]
     fn features(&self) -> Vec<String> {
-        self.state.current().features.clone()
+        self.s().features
     }
-
+    #[zbus(property)]
+    fn battery_left(&self) -> i32 {
+        self.s().battery_left
+    }
+    #[zbus(property)]
+    fn battery_right(&self) -> i32 {
+        self.s().battery_right
+    }
+    #[zbus(property)]
+    fn battery_case(&self) -> i32 {
+        self.s().battery_case
+    }
+    #[zbus(property)]
+    fn charging_left(&self) -> bool {
+        self.s().charging_left
+    }
+    #[zbus(property)]
+    fn charging_right(&self) -> bool {
+        self.s().charging_right
+    }
+    #[zbus(property)]
+    fn charging_case(&self) -> bool {
+        self.s().charging_case
+    }
+    #[zbus(property)]
+    fn ear_left(&self) -> bool {
+        self.s().ear_left
+    }
+    #[zbus(property)]
+    fn ear_right(&self) -> bool {
+        self.s().ear_right
+    }
+    #[zbus(property)]
+    fn anc_mode(&self) -> String {
+        self.s().anc_mode.as_str().to_string()
+    }
+    #[zbus(property)]
+    fn adaptive_noise_level(&self) -> u8 {
+        self.s().adaptive_noise_level
+    }
+    #[zbus(property)]
+    fn conversational_awareness(&self) -> bool {
+        self.s().conversational_awareness
+    }
+    #[zbus(property)]
+    fn conversational_activity_state(&self) -> String {
+        self.s().conversational_activity
+    }
+    #[zbus(property)]
+    fn one_bud_anc(&self) -> bool {
+        self.s().one_bud_anc
+    }
     #[zbus(property)]
     fn volume_swipe(&self) -> bool {
-        self.state.current().volume_swipe
+        self.s().volume_swipe
     }
-
     #[zbus(property)]
     fn adaptive_volume(&self) -> bool {
-        self.state.current().adaptive_volume
+        self.s().adaptive_volume
     }
-
     #[zbus(property)]
     fn chime_volume(&self) -> u8 {
-        self.state.current().chime_volume
+        self.s().chime_volume
+    }
+    #[zbus(property)]
+    fn audio_source(&self) -> String {
+        self.s().audio_source
+    }
+    #[zbus(property)]
+    fn mic_mode(&self) -> String {
+        self.s().mic_mode
+    }
+    #[zbus(property)]
+    fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+
+    // ─── EQ properties ────────────────────────────────────────────────
+
+    #[zbus(property)]
+    fn eq_preset(&self) -> String {
+        self.s().eq_preset
+    }
+    #[zbus(property)]
+    fn eq_status(&self) -> String {
+        self.s().eq_status
+    }
+    #[zbus(property)]
+    fn eq_error(&self) -> String {
+        self.s().eq_error
+    }
+    #[zbus(property)]
+    fn eq_backend(&self) -> String {
+        self.s().eq_backend
+    }
+
+    // ─── Settings (read-write, persisted) ─────────────────────────────
+
+    #[zbus(property)]
+    fn pause_on_removal(&self) -> bool {
+        config::read(&self.config, |c| c.ear_detection.pause_media)
+    }
+    #[zbus(property)]
+    fn set_pause_on_removal(&mut self, v: bool) -> fdo::Result<()> {
+        self.save_setting(|c| c.ear_detection.pause_media = v)
     }
 
     #[zbus(property)]
-    fn audio_source(&self) -> String {
-        self.state.current().audio_source.clone()
+    fn resume_on_insert(&self) -> bool {
+        config::read(&self.config, |c| c.ear_detection.resume_media)
+    }
+    #[zbus(property)]
+    fn set_resume_on_insert(&mut self, v: bool) -> fdo::Result<()> {
+        self.save_setting(|c| c.ear_detection.resume_media = v)
     }
 
-    // --- Methods ---
+    #[zbus(property)]
+    fn auto_reconnect(&self) -> bool {
+        config::read(&self.config, |c| c.reconnect.auto_reconnect)
+    }
+    #[zbus(property)]
+    fn set_auto_reconnect(&mut self, v: bool) -> fdo::Result<()> {
+        self.save_setting(|c| c.reconnect.auto_reconnect = v)
+    }
 
-    async fn set_anc_mode(&self, mode: &str) -> zbus::fdo::Result<()> {
+    #[zbus(property)]
+    fn eq_auto_load(&self) -> bool {
+        config::read(&self.config, |c| c.eq.auto_load)
+    }
+    #[zbus(property)]
+    fn set_eq_auto_load(&mut self, v: bool) -> fdo::Result<()> {
+        self.save_setting(|c| c.eq.auto_load = v)
+    }
+
+    #[zbus(property)]
+    fn preferred_device(&self) -> String {
+        config::read(&self.config, |c| {
+            c.device.address.clone().unwrap_or_default()
+        })
+    }
+    #[zbus(property)]
+    fn set_preferred_device(&mut self, v: String) -> fdo::Result<()> {
+        let v = v.trim().to_ascii_uppercase();
+        if !v.is_empty() && v.parse::<bluer::Address>().is_err() {
+            return Err(fdo::Error::InvalidArgs(format!(
+                "invalid MAC address '{v}'"
+            )));
+        }
+        self.save_setting(|c| c.device.address = (!v.is_empty()).then_some(v))
+    }
+
+    // ─── Controls ─────────────────────────────────────────────────────
+
+    async fn set_anc_mode(&self, mode: &str) -> fdo::Result<()> {
         let anc_mode = AncMode::from_str(mode)
-            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("invalid ANC mode: {mode}")))?;
+            .ok_or_else(|| fdo::Error::InvalidArgs(format!("invalid ANC mode: {mode}")))?;
         self.send_cmd(L2capCommand::SetAncMode(anc_mode)).await
     }
 
-    async fn set_conversational_awareness(&self, enabled: bool) -> zbus::fdo::Result<()> {
-        self.send_cmd(L2capCommand::SetConversationalAwareness(enabled)).await
+    async fn set_conversational_awareness(&self, enabled: bool) -> fdo::Result<()> {
+        self.send_cmd(L2capCommand::SetConversationalAwareness(enabled))
+            .await
     }
 
-    async fn set_adaptive_noise_level(&self, level: u8) -> zbus::fdo::Result<()> {
+    async fn set_adaptive_noise_level(&self, level: u8) -> fdo::Result<()> {
         if level > 100 {
-            return Err(zbus::fdo::Error::InvalidArgs("level must be 0-100".into()));
+            return Err(fdo::Error::InvalidArgs("level must be 0-100".into()));
         }
-        self.send_cmd(L2capCommand::SetAdaptiveNoiseLevel(level)).await
+        self.send_cmd(L2capCommand::SetAdaptiveNoiseLevel(level))
+            .await
     }
 
-    async fn set_one_bud_anc(&self, enabled: bool) -> zbus::fdo::Result<()> {
+    async fn set_one_bud_anc(&self, enabled: bool) -> fdo::Result<()> {
         self.send_cmd(L2capCommand::SetOneBudAnc(enabled)).await
     }
 
+    async fn set_volume_swipe(&self, enabled: bool) -> fdo::Result<()> {
+        self.send_cmd(L2capCommand::SetVolumeSwipe(enabled)).await
+    }
+
     /// Set which bud is the primary microphone. Accepts "auto", "right", "left".
-    async fn set_mic_mode(&self, mode: &str) -> zbus::fdo::Result<()> {
+    async fn set_mic_mode(&self, mode: &str) -> fdo::Result<()> {
         let mic_mode = MicMode::from_str(mode)
-            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("invalid mic mode: {mode}")))?;
+            .ok_or_else(|| fdo::Error::InvalidArgs(format!("invalid mic mode: {mode}")))?;
         self.send_cmd(L2capCommand::SetMicMode(mic_mode)).await
     }
 
-    async fn reconnect(&self) -> zbus::fdo::Result<()> {
+    // ─── Devices ──────────────────────────────────────────────────────
+
+    async fn reconnect(&self) -> fdo::Result<()> {
         info!("reconnect requested via D-Bus");
-        self.reconnect_tx
-            .send(())
-            .await
-            .map_err(|_| zbus::fdo::Error::Failed("reconnect channel closed".into()))?;
-        Ok(())
+        self.control(Control::Reconnect).await
     }
 
-    /// Trigger a BlueZ-level connect to the given AirPods MAC (e.g. "AA:BB:CC:DD:EE:FF").
-    /// The L2CAP/AAP handshake fires automatically once BlueZ reports the device connected.
-    async fn connect_to(&self, address: &str) -> zbus::fdo::Result<()> {
+    /// Trigger a BlueZ-level connect to the given AirPods MAC.
+    /// The AAP session starts automatically once BlueZ reports the connection.
+    async fn connect_to(&self, address: &str) -> fdo::Result<()> {
         info!("ConnectTo requested via D-Bus: {address}");
         let addr: bluer::Address = address
             .parse()
-            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("invalid MAC '{address}': {e}")))?;
+            .map_err(|e| fdo::Error::InvalidArgs(format!("invalid MAC '{address}': {e}")))?;
         crate::bluez::connect_device(addr)
             .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ connect failed: {e}")))?;
-        Ok(())
+            .map_err(|e| failed(format!("Bluetooth connect failed: {e}")))
     }
 
-    /// Disconnect the currently-connected AirPods at the BlueZ level. The L2CAP
-    /// session closes naturally as a side-effect.
-    async fn disconnect(&self) -> zbus::fdo::Result<()> {
+    /// Disconnect the connected AirPods at the BlueZ level. Auto-reconnect is
+    /// suppressed until the next time they connect.
+    async fn disconnect(&self) -> fdo::Result<()> {
         info!("Disconnect requested via D-Bus");
-        let Some(addr) = crate::bluez::currently_connected_airpods()
+        let addr = crate::bluez::currently_connected_airpods()
             .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ query failed: {e}")))?
-        else {
-            return Err(zbus::fdo::Error::Failed("no AirPods currently connected".into()));
-        };
+            .map_err(|e| failed(format!("BlueZ query failed: {e}")))?
+            .ok_or_else(|| failed("no AirPods currently connected"))?;
+        self.control(Control::UserDisconnected).await?;
         crate::bluez::disconnect_device(addr)
             .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ disconnect failed: {e}")))?;
-        Ok(())
+            .map_err(|e| failed(format!("Bluetooth disconnect failed: {e}")))
     }
 
-    /// Pair (and trust) an AirPods device by MAC address. AirPods must be in
-    /// pairing mode (case open, status light flashing white). Up to ~20s to
-    /// complete; surfaces a Failed error with a hint if discovery times out.
-    async fn pair(&self, address: &str) -> zbus::fdo::Result<()> {
+    /// Pair (and trust) AirPods by MAC. They must be in pairing mode.
+    async fn pair(&self, address: &str) -> fdo::Result<()> {
         info!("Pair requested via D-Bus: {address}");
         let addr: bluer::Address = address
             .parse()
-            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("invalid MAC '{address}': {e}")))?;
+            .map_err(|e| fdo::Error::InvalidArgs(format!("invalid MAC '{address}': {e}")))?;
         crate::bluez::pair_and_trust(addr)
             .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ pair failed: {e}")))?;
-        Ok(())
+            .map_err(|e| failed(format!("pairing failed: {e}")))
     }
 
-    /// Quick-pair scan: run an LE scan for `duration_secs` and return any
-    /// nearby unpaired AirPods broadcasting Apple Continuity proximity records.
-    /// Returns tuples of (mac, name, model_hint, rssi_dbm, in_pair_mode).
+    /// LE scan for nearby AirPods. Returns (mac, name, model, rssi, in_pair_mode).
     async fn quick_pair_scan(
         &self,
         duration_secs: u32,
-    ) -> zbus::fdo::Result<Vec<(String, String, String, i16, bool)>> {
+    ) -> fdo::Result<Vec<(String, String, String, i16, bool)>> {
         info!("QuickPairScan requested via D-Bus, duration={duration_secs}s");
-        let candidates = crate::bluez::quick_pair_scan(duration_secs)
+        let candidates = crate::bluez::quick_pair_scan(duration_secs.clamp(1, 30))
             .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ scan failed: {e}")))?;
+            .map_err(|e| failed(format!("Bluetooth scan failed: {e}")))?;
         Ok(candidates
             .into_iter()
             .map(|c| {
@@ -262,172 +381,213 @@ impl AirPodsInterface {
             .collect())
     }
 
-    /// List paired AirPods devices known to BlueZ. Returns (mac, name) tuples.
-    async fn list_paired(&self) -> zbus::fdo::Result<Vec<(String, String)>> {
+    /// Paired AirPods known to BlueZ: (mac, name).
+    async fn list_paired(&self) -> fdo::Result<Vec<(String, String)>> {
         let paired = crate::bluez::list_paired_airpods()
             .await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("BlueZ query failed: {e}")))?;
+            .map_err(|e| failed(format!("BlueZ query failed: {e}")))?;
         Ok(paired
             .into_iter()
-            .map(|(addr, name)| (addr.to_string(), name))
+            .map(|(a, n)| (a.to_string(), n))
             .collect())
     }
 
-    // --- EQ Properties ---
-
-    #[zbus(property)]
-    fn eq_preset(&self) -> String {
-        self.state.current().eq_preset.clone()
-    }
-
-    #[zbus(property)]
-    fn conversational_activity_state(&self) -> String {
-        self.state.current().conversational_activity.clone()
-    }
-
-    // --- EQ Methods ---
-
-    async fn set_eq_preset(&self, name: &str) -> zbus::fdo::Result<()> {
-        info!("SetEqPreset requested: {name}");
-        self.eq_tx
-            .send(EqCommand::Apply(name.to_string()))
-            .await
-            .map_err(|_| zbus::fdo::Error::Failed("EQ channel closed".into()))?;
-        Ok(())
-    }
-
-    async fn disable_eq(&self) -> zbus::fdo::Result<()> {
-        info!("DisableEq requested via D-Bus");
-        self.eq_tx
-            .send(EqCommand::Disable)
-            .await
-            .map_err(|_| zbus::fdo::Error::Failed("EQ channel closed".into()))?;
-        Ok(())
-    }
+    // ─── EQ ───────────────────────────────────────────────────────────
 
     async fn list_eq_presets(&self) -> Vec<String> {
-        EqPreset::list_available()
+        EqPreset::list().into_iter().map(|(p, _)| p.id).collect()
     }
 
-    // --- Signals ---
+    /// (id, name, description, user_editable)
+    async fn get_eq_presets(&self) -> Vec<(String, String, String, bool)> {
+        EqPreset::list()
+            .into_iter()
+            .map(|(p, src)| (p.id, p.name, p.description, src == Source::User))
+            .collect()
+    }
+
+    /// (name, description, preamp, [(type, freq, q, gain)])
+    async fn get_eq_preset(&self, id: &str) -> fdo::Result<(String, String, f64, Vec<Band>)> {
+        let (p, _) = EqPreset::load(id).map_err(preset_error)?;
+        let bands = p
+            .bands
+            .iter()
+            .map(|b| (b.filter_type.as_str().to_string(), b.freq, b.q, b.gain))
+            .collect();
+        Ok((p.name, p.description, p.preamp, bands))
+    }
+
+    async fn set_eq_preset(&self, id: &str) -> fdo::Result<()> {
+        info!("SetEqPreset requested: {id}");
+        EqPreset::load(id).map_err(preset_error)?;
+        self.control(Control::EqSelect(Some(id.to_string()))).await
+    }
+
+    async fn disable_eq(&self) -> fdo::Result<()> {
+        info!("DisableEq requested via D-Bus");
+        self.control(Control::EqSelect(None)).await
+    }
+
+    async fn save_eq_preset(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+        preamp: f64,
+        bands: Vec<Band>,
+    ) -> fdo::Result<()> {
+        let preset = EqPreset {
+            id: id.to_string(),
+            name: name.trim().to_string(),
+            description: description.trim().to_string(),
+            preamp,
+            bands: bands_from_wire(bands)?,
+        };
+        let path = preset.save().map_err(preset_error)?;
+        info!("saved EQ preset '{id}' to {}", path.display());
+        self.control(Control::EqPresetChanged(id.to_string())).await
+    }
+
+    async fn delete_eq_preset(&self, id: &str) -> fdo::Result<()> {
+        EqPreset::delete(id).map_err(preset_error)?;
+        info!("deleted EQ preset '{id}'");
+        // A built-in with the same id may now show through; the main loop
+        // re-applies or disables as appropriate.
+        self.control(Control::EqPresetChanged(id.to_string())).await
+    }
+
+    // ─── Signals ──────────────────────────────────────────────────────
 
     #[zbus(signal)]
-    async fn device_connected(emitter: &SignalEmitter<'_>, model: &str) -> zbus::Result<()>;
+    pub async fn device_connected(emitter: &SignalEmitter<'_>, model: &str) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn device_disconnected(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    pub async fn device_disconnected(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn ear_detection_changed(
+    pub async fn ear_detection_changed(
         emitter: &SignalEmitter<'_>,
         left: bool,
         right: bool,
     ) -> zbus::Result<()>;
 }
 
-const OBJECT_PATH: &str = "/org/costa/AirPods";
-
-/// Start the D-Bus service
+/// Start the D-Bus service.
 pub async fn serve(
     state: SharedState,
+    config: SharedConfig,
     cmd_tx: SharedCmdTx,
-    reconnect_tx: mpsc::Sender<()>,
-    eq_tx: mpsc::Sender<EqCommand>,
-) -> zbus::Result<Connection> {
-    let iface = AirPodsInterface::new(state, cmd_tx, reconnect_tx, eq_tx);
-
+    control: mpsc::Sender<Control>,
+) -> anyhow::Result<Connection> {
+    let iface = AirPodsInterface {
+        state,
+        config,
+        cmd_tx,
+        control,
+    };
     let connection = Connection::session().await?;
-    connection
-        .object_server()
-        .at(OBJECT_PATH, iface)
-        .await?;
-    connection.request_name("org.costa.AirPods").await?;
-
-    info!("D-Bus service running at org.costa.AirPods");
+    connection.object_server().at(OBJECT_PATH, iface).await?;
+    connection.request_name(BUS_NAME).await.map_err(|e| {
+        anyhow::anyhow!("can't claim {BUS_NAME} on the session bus ({e}) — is another airpods-daemon already running?")
+    })?;
+    info!("D-Bus service running at {BUS_NAME}");
     Ok(connection)
 }
 
-/// Emit property change notifications on the D-Bus connection
-pub async fn emit_properties_changed(connection: &Connection, changed_props: &[&str]) {
-    let Ok(iface_ref) = connection
-        .object_server()
-        .interface::<_, AirPodsInterface>(OBJECT_PATH)
-        .await
-    else {
-        return;
-    };
+/// Properties whose value is derived from [`AirPodsState`], with the value
+/// each one exposes. Anything that differs between two snapshots is
+/// announced in a single `PropertiesChanged` signal.
+fn state_properties(s: &AirPodsState) -> Vec<(&'static str, Value<'static>)> {
+    vec![
+        ("Connected", s.connected.into()),
+        ("Address", s.address.clone().into()),
+        ("Model", s.model.clone().into()),
+        ("ModelName", s.model_name.clone().into()),
+        ("Firmware", s.firmware.clone().into()),
+        ("Features", s.features.clone().into()),
+        ("BatteryLeft", s.battery_left.into()),
+        ("BatteryRight", s.battery_right.into()),
+        ("BatteryCase", s.battery_case.into()),
+        ("ChargingLeft", s.charging_left.into()),
+        ("ChargingRight", s.charging_right.into()),
+        ("ChargingCase", s.charging_case.into()),
+        ("EarLeft", s.ear_left.into()),
+        ("EarRight", s.ear_right.into()),
+        ("AncMode", s.anc_mode.as_str().into()),
+        ("AdaptiveNoiseLevel", s.adaptive_noise_level.into()),
+        ("ConversationalAwareness", s.conversational_awareness.into()),
+        (
+            "ConversationalActivityState",
+            s.conversational_activity.clone().into(),
+        ),
+        ("OneBudAnc", s.one_bud_anc.into()),
+        ("VolumeSwipe", s.volume_swipe.into()),
+        ("AdaptiveVolume", s.adaptive_volume.into()),
+        ("ChimeVolume", s.chime_volume.into()),
+        ("AudioSource", s.audio_source.clone().into()),
+        ("MicMode", s.mic_mode.clone().into()),
+        ("EqPreset", s.eq_preset.clone().into()),
+        ("EqStatus", s.eq_status.clone().into()),
+        ("EqError", s.eq_error.clone().into()),
+        ("EqBackend", s.eq_backend.clone().into()),
+    ]
+}
 
-    let emitter = iface_ref.signal_emitter();
-    let iface = iface_ref.get().await;
-
-    for prop in changed_props {
-        let result = match *prop {
-            "Connected" => iface.connected_changed(emitter).await,
-            "BatteryLeft" => iface.battery_left_changed(emitter).await,
-            "BatteryRight" => iface.battery_right_changed(emitter).await,
-            "BatteryCase" => iface.battery_case_changed(emitter).await,
-            "ChargingLeft" => iface.charging_left_changed(emitter).await,
-            "ChargingRight" => iface.charging_right_changed(emitter).await,
-            "ChargingCase" => iface.charging_case_changed(emitter).await,
-            "AncMode" => iface.anc_mode_changed(emitter).await,
-            "EarLeft" => iface.ear_left_changed(emitter).await,
-            "EarRight" => iface.ear_right_changed(emitter).await,
-            "ConversationalAwareness" => iface.conversational_awareness_changed(emitter).await,
-            "AdaptiveNoiseLevel" => iface.adaptive_noise_level_changed(emitter).await,
-            "OneBudAnc" => iface.one_bud_anc_changed(emitter).await,
-            "Model" => iface.model_changed(emitter).await,
-            "ModelName" => iface.model_name_changed(emitter).await,
-            "Firmware" => iface.firmware_changed(emitter).await,
-            "Features" => iface.features_changed(emitter).await,
-            "VolumeSwipe" => iface.volume_swipe_changed(emitter).await,
-            "AdaptiveVolume" => iface.adaptive_volume_changed(emitter).await,
-            "ChimeVolume" => iface.chime_volume_changed(emitter).await,
-            "AudioSource" => iface.audio_source_changed(emitter).await,
-            "EqPreset" => iface.eq_preset_changed(emitter).await,
-            "ConversationalActivityState" => iface.conversational_activity_state_changed(emitter).await,
-            _ => Ok(()),
+/// Watch the shared state and emit `PropertiesChanged` (plus the
+/// convenience signals) for whatever changed. This is the only place state
+/// changes are announced, so no code path can forget to.
+pub async fn run_property_notifier(connection: Connection, mut rx: watch::Receiver<AirPodsState>) {
+    let iface: InterfaceRef<AirPodsInterface> =
+        match connection.object_server().interface(OBJECT_PATH).await {
+            Ok(i) => i,
+            Err(e) => {
+                warn!("property notifier disabled: {e}");
+                return;
+            }
         };
-        if let Err(e) = result {
-            tracing::warn!("failed to emit PropertiesChanged for {prop}: {e}");
+    let emitter = iface.signal_emitter();
+    let mut prev = rx.borrow_and_update().clone();
+
+    while rx.changed().await.is_ok() {
+        let cur = rx.borrow_and_update().clone();
+        let old = state_properties(&prev);
+        let changed: HashMap<&str, Value<'_>> = state_properties(&cur)
+            .into_iter()
+            .zip(old)
+            .filter(|((_, new), (_, old))| new != old)
+            .map(|((name, v), _)| (name, v))
+            .collect();
+
+        if !changed.is_empty()
+            && let Err(e) = fdo::Properties::properties_changed(
+                emitter,
+                AirPodsInterface::name(),
+                changed,
+                Cow::Borrowed(&[]),
+            )
+            .await
+        {
+            warn!("failed to emit PropertiesChanged: {e}");
         }
-    }
-}
 
-/// Emit the DeviceConnected signal
-pub async fn emit_device_connected(connection: &Connection, model: &str) {
-    if let Ok(iface_ref) = connection
-        .object_server()
-        .interface::<_, AirPodsInterface>(OBJECT_PATH)
-        .await
-    {
-        let _ =
-            AirPodsInterface::device_connected(iface_ref.signal_emitter(), model).await;
-    }
-}
-
-/// Emit the DeviceDisconnected signal
-pub async fn emit_device_disconnected(connection: &Connection) {
-    if let Ok(iface_ref) = connection
-        .object_server()
-        .interface::<_, AirPodsInterface>(OBJECT_PATH)
-        .await
-    {
-        let _ = AirPodsInterface::device_disconnected(iface_ref.signal_emitter()).await;
-    }
-}
-
-/// Emit the EarDetectionChanged signal
-pub async fn emit_ear_detection_changed(connection: &Connection, left: bool, right: bool) {
-    if let Ok(iface_ref) = connection
-        .object_server()
-        .interface::<_, AirPodsInterface>(OBJECT_PATH)
-        .await
-    {
-        let _ = AirPodsInterface::ear_detection_changed(
-            iface_ref.signal_emitter(),
-            left,
-            right,
-        )
-        .await;
+        // Announce "connected" once the model is known, so listeners get a name.
+        let became_ready =
+            cur.connected && !cur.model.is_empty() && (!prev.connected || prev.model.is_empty());
+        if became_ready {
+            let name = if cur.model_name.is_empty() {
+                cur.model.as_str()
+            } else {
+                cur.model_name.as_str()
+            };
+            let _ = AirPodsInterface::device_connected(emitter, name).await;
+        }
+        if prev.connected && !cur.connected {
+            let _ = AirPodsInterface::device_disconnected(emitter).await;
+        }
+        if cur.connected && (cur.ear_left, cur.ear_right) != (prev.ear_left, prev.ear_right) {
+            let _ =
+                AirPodsInterface::ear_detection_changed(emitter, cur.ear_left, cur.ear_right).await;
+        }
+        prev = cur;
     }
 }

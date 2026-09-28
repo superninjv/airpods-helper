@@ -28,6 +28,7 @@ pub enum AapEvent {
     VolumeSwipe(bool),
     AdaptiveVolume(bool),
     ChimeVolume(u8),
+    MicMode(MicMode),
     HeadTracking(#[allow(dead_code)] Vec<u8>),
     AudioSource(AudioSource),
     Disconnected,
@@ -44,6 +45,10 @@ pub enum AudioSource {
 
 #[derive(Debug, Clone)]
 pub struct BatteryUpdate {
+    /// The bud listed first is the primary (the one talking to the host).
+    /// Ear-detection packets are ordered primary/secondary, so this is what
+    /// maps them to left/right. `None` for AirPods Max.
+    pub primary: Option<BatteryComponent>,
     pub left: Option<BatteryEntry>,
     pub right: Option<BatteryEntry>,
     pub case: Option<BatteryEntry>,
@@ -94,8 +99,7 @@ pub fn parse(data: &[u8]) -> Result<AapEvent, ParseError> {
     }
 
     // Handshake ACK: starts with 01 00 04 00
-    if data.len() >= 4 && data[0] == 0x01 && data[1] == 0x00 && data[2] == 0x04 && data[3] == 0x00
-    {
+    if data.len() >= 4 && data[0] == 0x01 && data[1] == 0x00 && data[2] == 0x04 && data[3] == 0x00 {
         return Ok(AapEvent::HandshakeAck);
     }
 
@@ -205,6 +209,7 @@ fn parse_battery(payload: &[u8]) -> Result<AapEvent, ParseError> {
     }
 
     let mut update = BatteryUpdate {
+        primary: None,
         left: None,
         right: None,
         case: None,
@@ -222,7 +227,16 @@ fn parse_battery(payload: &[u8]) -> Result<AapEvent, ParseError> {
             connected: !matches!(status, Some(ChargingStatus::Disconnected)),
         };
 
-        match BatteryComponent::from_byte(component_byte) {
+        let component = BatteryComponent::from_byte(component_byte);
+        if update.primary.is_none()
+            && matches!(
+                component,
+                Some(BatteryComponent::Left | BatteryComponent::Right)
+            )
+        {
+            update.primary = component;
+        }
+        match component {
             Some(BatteryComponent::Headphones) => {
                 // AirPods Max reports one battery. Mirror it into the existing
                 // left/right fields so current clients can display its level.
@@ -246,8 +260,16 @@ fn parse_ear_detection(payload: &[u8]) -> Result<AapEvent, ParseError> {
         return Err(ParseError::TooShort(payload.len()));
     }
 
-    let primary = EarStatus::from_byte(payload[0]).ok_or(ParseError::InvalidData)?;
-    let secondary = EarStatus::from_byte(payload[1]).ok_or(ParseError::InvalidData)?;
+    // Unknown status bytes (e.g. a bud that's disconnected) count as "not in
+    // ear" rather than discarding the other bud's valid status.
+    let status = |b: u8| {
+        EarStatus::from_byte(b).unwrap_or_else(|| {
+            debug!("unknown ear status byte 0x{b:02X}, treating as out of ear");
+            EarStatus::OutOfEar
+        })
+    };
+    let primary = status(payload[0]);
+    let secondary = status(payload[1]);
 
     Ok(AapEvent::EarDetection(EarDetectionUpdate {
         primary,
@@ -274,9 +296,7 @@ fn parse_control(payload: &[u8]) -> Result<AapEvent, ParseError> {
             let enabled = value == 0x01;
             Ok(AapEvent::ConversationalAwareness(enabled))
         }
-        SUB_ADAPTIVE_NOISE_LEVEL => {
-            Ok(AapEvent::AdaptiveNoiseLevel(value))
-        }
+        SUB_ADAPTIVE_NOISE_LEVEL => Ok(AapEvent::AdaptiveNoiseLevel(value)),
         SUB_ONE_BUD_ANC => {
             let enabled = value == 0x01;
             Ok(AapEvent::OneBudAnc(enabled))
@@ -289,8 +309,10 @@ fn parse_control(payload: &[u8]) -> Result<AapEvent, ParseError> {
             let enabled = value == 0x01;
             Ok(AapEvent::AdaptiveVolume(enabled))
         }
-        SUB_CHIME_VOLUME => {
-            Ok(AapEvent::ChimeVolume(value))
+        SUB_CHIME_VOLUME => Ok(AapEvent::ChimeVolume(value)),
+        SUB_MIC_MODE => {
+            let mode = MicMode::from_byte(value).ok_or(ParseError::InvalidData)?;
+            Ok(AapEvent::MicMode(mode))
         }
 
         // Known sub-commands — log at debug to reduce noise
@@ -351,9 +373,10 @@ fn parse_device_info(data: &[u8]) -> Result<AapEvent, ParseError> {
     }
 
     // Strings start at offset 11, each null-terminated
+    // Fields are positional: an empty field (e.g. no name set) is still a
+    // separate NUL-terminated slot, so don't filter empties out.
     let strings: Vec<String> = data[11..]
         .split(|&b| b == 0x00)
-        .filter(|s| !s.is_empty())
         .map(|s| String::from_utf8_lossy(s).into_owned())
         .collect();
 
@@ -447,6 +470,54 @@ mod tests {
     }
 
     #[test]
+    fn test_battery_primary_is_first_bud() {
+        let right_first = [
+            0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x02, 0x02, 0x01, 0x50, 0x02, 0x01, // Right
+            0x04, 0x01, 0x40, 0x02, 0x01, // Left
+        ];
+        let AapEvent::Battery(b) = parse(&right_first).unwrap() else {
+            panic!()
+        };
+        assert_eq!(b.primary, Some(BatteryComponent::Right));
+
+        let case_then_left = [
+            0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x02, 0x08, 0x01, 0x50, 0x02,
+            0x01, // Case (never primary)
+            0x04, 0x01, 0x40, 0x02, 0x01, // Left
+        ];
+        let AapEvent::Battery(b) = parse(&case_then_left).unwrap() else {
+            panic!()
+        };
+        assert_eq!(b.primary, Some(BatteryComponent::Left));
+    }
+
+    #[test]
+    fn test_device_info_fields_are_positional() {
+        let mut data = vec![0x04, 0x00, 0x04, 0x00, 0x1D, 0x00, 0, 0, 0, 0, 0];
+        // empty name, then model, manufacturer, serial, firmware
+        for field in ["", "A2698", "Apple Inc.", "SERIAL1", "6F8"] {
+            data.extend_from_slice(field.as_bytes());
+            data.push(0);
+        }
+        let AapEvent::DeviceInfo(info) = parse(&data).unwrap() else {
+            panic!()
+        };
+        assert_eq!(info.name, "");
+        assert_eq!(info.model, "A2698");
+        assert_eq!(info.firmware, "6F8");
+    }
+
+    #[test]
+    fn test_unknown_ear_status_keeps_other_bud() {
+        let data = [0x04, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x07];
+        let AapEvent::EarDetection(ed) = parse(&data).unwrap() else {
+            panic!()
+        };
+        assert!(ed.primary.is_in_ear());
+        assert!(!ed.secondary.is_in_ear());
+    }
+
+    #[test]
     fn test_parse_anc_mode() {
         for (mode_byte, expected_str) in [
             (0x01, "off"),
@@ -454,7 +525,9 @@ mod tests {
             (0x03, "transparency"),
             (0x04, "adaptive"),
         ] {
-            let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x0D, mode_byte, 0x00, 0x00, 0x00];
+            let data = [
+                0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x0D, mode_byte, 0x00, 0x00, 0x00,
+            ];
             let event = parse(&data).unwrap();
             if let AapEvent::AncMode(mode) = event {
                 assert_eq!(mode.as_str(), expected_str);
@@ -479,58 +552,78 @@ mod tests {
 
     #[test]
     fn test_parse_conversational_awareness() {
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x28, 0x01, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x28, 0x01, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::ConversationalAwareness(true)));
 
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x28, 0x02, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x28, 0x02, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::ConversationalAwareness(false)));
     }
 
     #[test]
     fn test_parse_adaptive_noise_level() {
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x2E, 0x32, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x2E, 0x32, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::AdaptiveNoiseLevel(50)));
     }
 
     #[test]
     fn test_parse_one_bud_anc() {
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1B, 0x01, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1B, 0x01, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::OneBudAnc(true)));
 
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1B, 0x02, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1B, 0x02, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::OneBudAnc(false)));
     }
 
     #[test]
     fn test_parse_volume_swipe() {
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x25, 0x01, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x25, 0x01, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::VolumeSwipe(true)));
 
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x25, 0x02, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x25, 0x02, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::VolumeSwipe(false)));
     }
 
     #[test]
     fn test_parse_adaptive_volume() {
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x26, 0x01, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x26, 0x01, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::AdaptiveVolume(true)));
 
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x26, 0x02, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x26, 0x02, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::AdaptiveVolume(false)));
     }
 
     #[test]
     fn test_parse_chime_volume() {
-        let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1F, 0x50, 0x00, 0x00, 0x00];
+        let data = [
+            0x04, 0x00, 0x04, 0x00, 0x09, 0x00, 0x1F, 0x50, 0x00, 0x00, 0x00,
+        ];
         let event = parse(&data).unwrap();
         assert!(matches!(event, AapEvent::ChimeVolume(0x50)));
     }
@@ -579,7 +672,9 @@ mod tests {
         // Known but unhandled control sub-commands should not panic
         let subcmds: &[u8] = &[0x17, 0x18, 0x23, 0x24, 0x29, 0x2C, 0x2F, 0x33, 0x35, 0x3E];
         for &sub in subcmds {
-            let data = [0x04, 0x00, 0x04, 0x00, 0x09, 0x00, sub, 0x00, 0x00, 0x00, 0x00];
+            let data = [
+                0x04, 0x00, 0x04, 0x00, 0x09, 0x00, sub, 0x00, 0x00, 0x00, 0x00,
+            ];
             let result = parse(&data);
             assert!(result.is_err(), "sub-command 0x{sub:02X} should return Err");
         }

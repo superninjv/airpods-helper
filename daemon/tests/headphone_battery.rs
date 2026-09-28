@@ -1,10 +1,10 @@
 // Exercise all three protocol copies without platform-specific transports.
-#![allow(dead_code)]
+#![allow(dead_code, clippy::all)]
 
-#[path = "../src/aap/mod.rs"]
-mod linux;
 #[path = "../../app/src-tauri/src/aap/mod.rs"]
 mod desktop;
+#[path = "../src/aap/mod.rs"]
+mod linux;
 #[path = "../../windows/src/aap/mod.rs"]
 mod windows;
 
@@ -12,12 +12,14 @@ macro_rules! headphone_battery_test {
     ($name:ident, $protocol:ident) => {
         #[test]
         fn $name() {
-            use $protocol::parser::{parse, AapEvent};
+            use $protocol::parser::{AapEvent, parse};
 
             for level in [0, 73, 100] {
-                for (status, charging, connected) in
-                    [(0x01, true, true), (0x02, false, true), (0x04, false, false)]
-                {
+                for (status, charging, connected) in [
+                    (0x01, true, true),
+                    (0x02, false, true),
+                    (0x04, false, false),
+                ] {
                     let packet = [
                         0x04, 0x00, 0x04, 0x00, 0x04, 0x00, // battery notification
                         0x01, // one battery
