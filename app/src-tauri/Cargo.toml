@@ -3,24 +3,29 @@ name = "airpods-app"
 version = "0.3.0-rc.1"
 edition = "2024"
 
+# Standalone crate (excluded from the root workspace); an explicit empty table
+# keeps cargo from walking further up when the repo is checked out nested
+# (e.g. git worktrees).
+[workspace]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
-tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = "2"
 
+# Linux: the app is a thin D-Bus client of airpods-daemon (org.costa.AirPods).
 [target.'cfg(target_os = "linux")'.dependencies]
-bluer = { version = "0.17", features = ["l2cap", "bluetoothd"] }
-futures = "0.3"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
+# Windows: the app talks to `airpods-windows daemon` over its localhost HTTP API.
 [target.'cfg(target_os = "windows")'.dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 

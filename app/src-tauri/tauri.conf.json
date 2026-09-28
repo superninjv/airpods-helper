@@ -5,7 +5,6 @@
   "identifier": "org.costa.airpods-helper",
   "build": {
     "frontendDist": "../src",
-    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
@@ -16,18 +15,28 @@
         "label": "main",
         "title": "AirPods Helper",
         "width": 400,
-        "height": 600,
-        "resizable": false,
+        "height": 720,
+        "resizable": true,
         "center": true,
         "decorations": true,
-        "visible": true,
-        "transparent": false
+        "visible": false,
+        "transparent": false,
+        "minWidth": 400,
+        "minHeight": 420
       }
     ],
-    "trayIcon": {
-      "id": "main",
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self'",
+        "img-src": "'self' data:",
+        "font-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      }
     }
   },
   "bundle": {
@@ -41,7 +50,9 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["bluez"]
+        "depends": [
+          "bluez"
+        ]
       }
     }
   }
