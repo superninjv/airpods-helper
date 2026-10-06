@@ -2,20 +2,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' daemon/Cargo.toml | head -1)"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 DIST="airpods-helper-${VERSION}-x86_64-linux"
 
 
 # Build
-cargo build --workspace --release
+cargo build --workspace --profile dist
 
 # Clean and create dist
 rm -rf "packaging/$DIST" "packaging/$DIST.tar.gz"
 mkdir -p "packaging/$DIST"/{bin,systemd,dbus}
 
 # Binaries
-cp target/release/airpods-daemon "packaging/$DIST/bin/"
-cp target/release/airpods-cli "packaging/$DIST/bin/"
+cp target/dist/airpods-daemon "packaging/$DIST/bin/"
+cp target/dist/airpods-cli "packaging/$DIST/bin/"
 
 # Service files
 cp daemon/airpods-daemon.service "packaging/$DIST/systemd/"

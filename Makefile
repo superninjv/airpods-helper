@@ -1,3 +1,6 @@
+# Builds run niced so they never compete with the desktop for CPU.
+CARGO ?= nice -n 10 cargo
+
 PREFIX ?= $(HOME)/.local
 SYSTEM_PREFIX ?= /usr/local
 DAEMON_BIN = target/release/airpods-daemon
@@ -11,7 +14,7 @@ DBUS_SERVICES_DIR = $(HOME)/.local/share/dbus-1/services
 all: build
 
 build:
-	cargo build --workspace --release
+	$(CARGO) build --workspace --release
 
 # Per-user install into ~/.local (does not require sudo, except for the final setcap step)
 install: build

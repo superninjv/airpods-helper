@@ -1,0 +1,10 @@
+# Repo-wide cargo settings. Cargo finds this file from any directory under the
+# repo, so app/src-tauri (a separate workspace) picks it up too.
+
+[build]
+# One target/ for the whole repo: the Tauri app reuses the daemon/cli build cache
+# instead of keeping its own copy under app/src-tauri/target. Relative paths here
+# resolve against the repo root (the parent of .cargo/).
+target-dir = "target"
+# Leave two cores free so a build doesn't starve the desktop. Negative = ncpus - n.
+jobs = -2

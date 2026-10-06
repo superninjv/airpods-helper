@@ -20,7 +20,7 @@ sha256sums=('SKIP'
 
 build() {
     cd "$pkgname-$pkgver"
-    cargo build --workspace --release
+    cargo build --workspace --profile dist
 }
 
 check() {
@@ -32,8 +32,8 @@ package() {
     cd "$pkgname-$pkgver"
 
     # Binaries
-    install -Dm755 target/release/airpods-daemon "$pkgdir/usr/bin/airpods-daemon"
-    install -Dm755 target/release/airpods-cli "$pkgdir/usr/bin/airpods-cli"
+    install -Dm755 target/dist/airpods-daemon "$pkgdir/usr/bin/airpods-daemon"
+    install -Dm755 target/dist/airpods-cli "$pkgdir/usr/bin/airpods-cli"
 
     # Systemd user service
     install -Dm644 daemon/airpods-daemon.service "$pkgdir/usr/lib/systemd/user/airpods-daemon.service"

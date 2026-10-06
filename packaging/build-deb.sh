@@ -2,14 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' daemon/Cargo.toml | head -1)"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 PKGNAME="airpods-helper"
 ARCH="amd64"
 STAGING="$PKGNAME-${VERSION}_${ARCH}"
 
 
 # Build
-cargo build --workspace --release
+cargo build --workspace --profile dist
 
 # Clean staging
 rm -rf "packaging/$STAGING" "packaging/${STAGING}.deb"
@@ -21,8 +21,8 @@ mkdir -p "packaging/$STAGING/usr/share/doc/airpods-helper"
 mkdir -p "packaging/$STAGING/usr/share/licenses/airpods-helper"
 
 # Binaries
-cp target/release/airpods-daemon "packaging/$STAGING/usr/bin/"
-cp target/release/airpods-cli "packaging/$STAGING/usr/bin/"
+cp target/dist/airpods-daemon "packaging/$STAGING/usr/bin/"
+cp target/dist/airpods-cli "packaging/$STAGING/usr/bin/"
 
 # Systemd service (fix path)
 sed 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \

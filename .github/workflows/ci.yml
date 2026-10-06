@@ -78,19 +78,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Build release binaries
-        run: cargo build --workspace --release --target ${{ matrix.target }}
+        run: cargo build --workspace --profile dist --target ${{ matrix.target }}
 
       - name: Upload daemon binary
         uses: actions/upload-artifact@v4
         with:
           name: airpods-daemon-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/airpods-daemon
+          path: target/${{ matrix.target }}/dist/airpods-daemon
 
       - name: Upload CLI binary
         uses: actions/upload-artifact@v4
         with:
           name: airpods-cli-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/airpods-cli
+          path: target/${{ matrix.target }}/dist/airpods-cli
 
   windows-check:
     name: Windows Check & Test
