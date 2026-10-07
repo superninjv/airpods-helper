@@ -1,12 +1,7 @@
 [workspace]
 members = ["aap", "daemon", "cli"]
-# windows/ is excluded from the workspace because it depends on Windows-specific
-# crates (windows-rs, btleplug WinRT backend) that cannot build on Linux.
-# On a Windows dev machine, either:
-#   1. Build it standalone: cd windows && cargo build
-#   2. Or add "windows" to members above and remove it from exclude.
 # app/src-tauri is its own workspace (it needs webkit2gtk to build).
-exclude = ["windows", "app/src-tauri"]
+exclude = ["app/src-tauri"]
 resolver = "3"
 
 # One version for the three workspace crates; packaging scripts read it from here.

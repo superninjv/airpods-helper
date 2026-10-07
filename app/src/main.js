@@ -65,7 +65,6 @@
 
   const has = (f) => !!S && Array.isArray(S.features) && S.features.includes(f);
   const isHeadphones = () => has("headphones");
-  const isLinux = () => !S || S.platform !== "windows";
   const isRunning = () => !!S && S.daemon === "running";
 
   const MAC_RE = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/;
@@ -177,7 +176,7 @@
     $("conn-text").textContent = text;
     $("device-name").textContent = name;
     $("device-sub").textContent = sub;
-    $("btn-disconnect").hidden = !(isRunning() && s.connected && isLinux());
+    $("btn-disconnect").hidden = !(isRunning() && s.connected);
     document.title = s.connected ? `${name} — AirPods Helper` : "AirPods Helper";
   }
 
@@ -192,10 +191,6 @@
     err.hidden = !detail;
     err.textContent = detail;
     $("outdated-banner").hidden = !(isRunning() && s.daemon_outdated);
-    if (!isLinux()) {
-      $("daemon-title").textContent = "airpods-windows isn't running";
-      $("cmd-enable").textContent = "airpods-windows daemon";
-    }
   }
 
   // ── Battery ────────────────────────────────────────────────────────────
@@ -388,10 +383,10 @@
       any = any || show;
       if (show && !pendingToggles.has(t.el)) $(t.el).checked = !!s[t.field];
     }
-    const showMic = connected && !isHeadphones() && isLinux();
+    const showMic = connected && !isHeadphones();
     $("row-mic").hidden = !showMic;
     if (showMic) setChecked($("mic-group"), s.mic_mode || "auto");
-    const showMicSource = renderMicSource(s, connected && isLinux());
+    const showMicSource = renderMicSource(s, connected);
     $("features-card").hidden = !(any || showMic || showMicSource);
   }
 
@@ -486,7 +481,7 @@
   }
 
   function renderEq(s) {
-    const show = isRunning() && isLinux();
+    const show = isRunning();
     $("eq-card").hidden = !show;
     if (!show) return;
 
@@ -817,7 +812,7 @@
   let connecting = null;
 
   async function refreshPaired() {
-    if (!isRunning() || !isLinux()) return;
+    if (!isRunning()) return;
     const btn = $("btn-refresh");
     btn.classList.add("spinning");
     try {
@@ -841,7 +836,7 @@
   }
 
   function renderDevices(s) {
-    const show = isRunning() && !s.connected && isLinux();
+    const show = isRunning() && !s.connected;
     $("devices-card").hidden = !show;
     if (!show) return;
     $("device-empty").hidden = paired.length > 0;
@@ -964,7 +959,7 @@
   function renderSettings(s) {
     const show = isRunning() || s.daemon === "absent";
     $("settings-card").hidden = !show;
-    const daemonSettings = isRunning() && isLinux();
+    const daemonSettings = isRunning();
     for (const input of document.querySelectorAll("[data-setting]")) {
       input.closest(".toggle-row").hidden = !daemonSettings;
       if (!pendingSettings.has(input.id)) input.checked = !!s[input.dataset.setting];
@@ -1109,7 +1104,7 @@
 
     // Pick up presets/devices changed elsewhere (CLI, other clients).
     window.addEventListener("focus", () => {
-      if (!isRunning() || !isLinux()) return;
+      if (!isRunning()) return;
       invoke("refresh_eq_presets").catch(() => {});
       if (S.eq_preset && !editor) loadPreset(S.eq_preset, true);
       if (!S.connected) refreshPaired();

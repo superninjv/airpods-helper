@@ -213,11 +213,10 @@ cargo test -p airpods-daemon -- --ignored --test-threads=1   # routing tests aga
 
 | Crate | What it is |
 |---|---|
-| `aap/` | Protocol only: packet parser and builders, model table. Shared with the Windows build. |
+| `aap/` | Protocol only: packet parser and builders, model table. |
 | `daemon/` | BlueZ monitor, AAP session, D-Bus service, EQ backends, MPRIS. |
 | `cli/` | `airpods-cli`. |
 | `app/` | Tauri desktop app. |
-| `windows/` | Experimental Windows daemon. It compiles, but it hasn't been tested on hardware. |
 
 Protocol details come from [LibrePods](https://github.com/librepods-org/librepods), whose research made this project possible. Captures from new models or firmware are always useful, so open an issue.
 

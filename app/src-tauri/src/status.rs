@@ -2,7 +2,7 @@
 //!
 //! The app holds no AirPods state of its own: `Status` is a mirror of the
 //! daemon's properties (plus a few app-local bits such as "start on login")
-//! kept up to date by the platform backend and pushed to the webview as a
+//! kept up to date by the D-Bus client in `linux.rs` and pushed to the webview as a
 //! `status` event whenever it changes.
 
 use std::sync::Arc;
@@ -66,7 +66,6 @@ pub struct QuickPairCandidate {
 /// Everything the UI renders. Field names are the JSON keys used by `main.js`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
-    pub platform: &'static str,
     pub daemon: DaemonState,
     /// Human-readable reason the daemon is unreachable (empty otherwise).
     pub daemon_error: String,
@@ -123,11 +122,6 @@ pub struct Status {
 impl Default for Status {
     fn default() -> Self {
         Self {
-            platform: if cfg!(target_os = "windows") {
-                "windows"
-            } else {
-                "linux"
-            },
             daemon: DaemonState::Starting,
             daemon_error: String::new(),
             daemon_outdated: false,

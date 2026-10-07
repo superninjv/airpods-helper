@@ -1,27 +1,14 @@
-// Prevents additional console window on Windows in release
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 //! AirPods Helper desktop app.
 //!
-//! The app is a UI only: on Linux it is a client of `airpods-daemon` over
-//! D-Bus (`org.costa.AirPods`), on Windows of `airpods-windows daemon` over
-//! HTTP. State flows backend → [`status::Store`] → `status` event → webview;
+//! The app is a UI only: a client of `airpods-daemon` over D-Bus
+//! (`org.costa.AirPods`). State flows backend → [`status::Store`] → `status` event → webview;
 //! actions flow webview → Tauri command → backend.
 
 mod status;
 mod tray;
 
-#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "linux")]
 pub use linux::Client as Backend;
-
-#[cfg(target_os = "windows")]
-mod models;
-#[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "windows")]
-pub use windows::Client as Backend;
 
 use std::sync::Arc;
 use std::time::Duration;

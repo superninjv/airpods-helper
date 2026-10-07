@@ -25,10 +25,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
-# Windows: the app talks to `airpods-windows daemon` over its localhost HTTP API.
-[target.'cfg(target_os = "windows")'.dependencies]
-reqwest = { version = "0.12", features = ["json"] }
-
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

@@ -1,5 +1,4 @@
-//! Apple Accessory Protocol (AAP): packet builders, parser and model table,
-//! shared by the Linux daemon and the Windows build.
+//! Apple Accessory Protocol (AAP): packet builders, parser and model table.
 //!
 //! Transport: L2CAP PSM 0x1001 (BR/EDR). Control packets share the header
 //! `04 00 04 00 [cmd] 00 [payload]`.
