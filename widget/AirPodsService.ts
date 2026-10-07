@@ -40,6 +40,11 @@ export interface AirPodsState {
   eqStatus: string
   eqError: string
   eqPresets: EqPresetInfo[]
+  /** "AirPods Microphone" source: off | unavailable | idle | starting | streaming | error */
+  micStatus: string
+  micError: string
+  /** Setting: offer the mic source at all. */
+  micSource: boolean
   model: string
   modelName: string
   firmware: string
@@ -67,6 +72,9 @@ const DEFAULT_STATE: AirPodsState = {
   eqStatus: "off",
   eqError: "",
   eqPresets: [],
+  micStatus: "off",
+  micError: "",
+  micSource: true,
   model: "",
   modelName: "",
   firmware: "",
@@ -115,6 +123,10 @@ function readAllProperties(): Partial<AirPodsState> {
     eqPreset: getProperty("EqPreset") ?? "",
     eqStatus: getProperty("EqStatus") ?? "off",
     eqError: getProperty("EqError") ?? "",
+    // Daemons older than the mic source don't have these; treat as off.
+    micStatus: getProperty("MicStatus") ?? "off",
+    micError: getProperty("MicError") ?? "",
+    micSource: getProperty("MicSource") ?? true,
     model: getProperty("Model") ?? "",
     modelName: getProperty("ModelName") ?? "",
     firmware: getProperty("Firmware") ?? "",

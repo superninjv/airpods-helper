@@ -86,7 +86,7 @@ async fn set_mic_mode(backend: B<'_>, mode: String) -> Result<(), String> {
 
 /// Write one of the daemon's read-write settings properties.
 /// `key` is the snake_case status field (`pause_on_removal`, `resume_on_insert`,
-/// `auto_reconnect`, `preferred_device`, `eq_auto_load`).
+/// `auto_reconnect`, `preferred_device`, `eq_auto_load`, `mic_source`).
 #[tauri::command]
 async fn set_setting(backend: B<'_>, key: String, value: serde_json::Value) -> Result<(), String> {
     backend.set_setting(&key, value).await

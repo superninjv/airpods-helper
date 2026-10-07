@@ -4,6 +4,7 @@ API v2 (docs/dbus-api.md) on the session bus, so the app/widget can be run and
 tested without AirPods or Bluetooth.
 
     python3 app/dev/mock-daemon.py [--model pro2|max] [--disconnected]
+                                   [--mic idle|streaming|unavailable|error]
 
 Needs python3-gobject (gi). Stop the real daemon first, or run everything in
 an isolated bus:  dbus-run-session -- sh -c 'python3 app/dev/mock-daemon.py & …'
@@ -54,11 +55,14 @@ XML = f"""
     <property name="EqStatus" type="s" access="read"/>
     <property name="EqError" type="s" access="read"/>
     <property name="EqBackend" type="s" access="read"/>
+    <property name="MicStatus" type="s" access="read"/>
+    <property name="MicError" type="s" access="read"/>
     <property name="PauseOnRemoval" type="b" access="readwrite"/>
     <property name="ResumeOnInsert" type="b" access="readwrite"/>
     <property name="AutoReconnect" type="b" access="readwrite"/>
     <property name="PreferredDevice" type="s" access="readwrite"/>
     <property name="EqAutoLoad" type="b" access="readwrite"/>
+    <property name="MicSource" type="b" access="readwrite"/>
     <method name="SetAncMode"><arg name="mode" type="s" direction="in"/></method>
     <method name="SetAdaptiveNoiseLevel"><arg name="level" type="y" direction="in"/></method>
     <method name="SetConversationalAwareness"><arg name="enabled" type="b" direction="in"/></method>
@@ -119,6 +123,13 @@ MODELS = {
 }
 
 PAIRED = [("AC:90:85:12:34:56", "Mock AirPods Pro"), ("F4:34:F0:AA:BB:CC", "Mock AirPods Max")]
+# What the mic source reports while a session is up and MicSource is on,
+# picked with --mic. The texts mirror the real daemon's MicError wording.
+MIC_ERRORS = {
+    "unavailable": "libfdk-aac is not installed (install libfdk-aac / libfdk-aac2 to use the AirPods microphone)",
+    "error": "the AirPods stopped sending microphone audio",
+}
+
 MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
 
 
@@ -134,6 +145,7 @@ class Mock:
     def __init__(self, args):
         self.conn = None
         self.model = args.model
+        self.mic = args.mic
         self.props = dict(
             Connected=False, Address="", Model="", ModelName="", Firmware="", Features=[],
             BatteryLeft=-1, BatteryRight=-1, BatteryCase=-1,
@@ -144,6 +156,7 @@ class Mock:
             EqPreset="bass-boost", EqStatus="waiting", EqError="", EqBackend="pipewire",
             PauseOnRemoval=True, ResumeOnInsert=True, AutoReconnect=True,
             PreferredDevice="", EqAutoLoad=True,
+            MicSource=True, MicStatus="off", MicError="",
         )
         if not args.disconnected:
             self.props.update(self.connected_props(PAIRED[0][0]))
@@ -155,7 +168,15 @@ class Mock:
         if "headphones" in p["Features"]:
             p.update(BatteryRight=p["BatteryLeft"], EarLeft=False, EarRight=False)
         p["EqStatus"] = "active" if self.props.get("EqPreset") else "off"
+        p.update(self.mic_props(True, self.props["MicSource"]))
         return p
+
+    def mic_props(self, connected, enabled):
+        # The real daemon only offers the source during an AAP session with the
+        # setting on; otherwise MicStatus is "off".
+        if not (connected and enabled):
+            return dict(MicStatus="off", MicError="")
+        return dict(MicStatus=self.mic, MicError=MIC_ERRORS.get(self.mic, ""))
 
     # ── helpers ──
     def set(self, **changes):
@@ -201,7 +222,7 @@ class Mock:
         elif method == "Disconnect":
             self.set(Connected=False, Address="", Model="", ModelName="", Firmware="", Features=[],
                      BatteryLeft=-1, BatteryRight=-1, BatteryCase=-1, EarLeft=False, EarRight=False,
-                     EqStatus="waiting" if p["EqPreset"] else "off")
+                     EqStatus="waiting" if p["EqPreset"] else "off", **self.mic_props(False, p["MicSource"]))
         elif method == "Pair":
             raise Failed("pair: org.bluez.Error.AuthenticationFailed")
         elif method == "QuickPairScan":
@@ -244,6 +265,8 @@ class Mock:
         if name == "PreferredDevice" and value and not MAC_RE.match(value):
             raise InvalidArgs(f"invalid MAC {value!r}")
         self.set(**{name: value})
+        if name == "MicSource":
+            self.set(**self.mic_props(self.props["Connected"], value))
 
     def tick(self):
         if self.props["Connected"] and self.props["BatteryLeft"] > 5:
@@ -259,6 +282,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", choices=sorted(MODELS), default="pro2")
     ap.add_argument("--disconnected", action="store_true")
+    ap.add_argument("--mic", choices=["idle", "starting", "streaming", "unavailable", "error"], default="idle",
+                    help="MicStatus to report while connected with MicSource on")
     args = ap.parse_args()
 
     node = Gio.DBusNodeInfo.new_for_xml(XML)

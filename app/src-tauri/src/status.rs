@@ -104,12 +104,17 @@ pub struct Status {
     pub eq_backend: String,
     pub eq_presets: Vec<EqPresetInfo>,
 
+    // Microphone source (off | unavailable | idle | starting | streaming | error).
+    pub mic_status: String,
+    pub mic_error: String,
+
     // Daemon settings (read-write properties).
     pub pause_on_removal: bool,
     pub resume_on_insert: bool,
     pub auto_reconnect: bool,
     pub preferred_device: String,
     pub eq_auto_load: bool,
+    pub mic_source: bool,
 
     // App-local.
     pub start_on_login: bool,
@@ -153,11 +158,14 @@ impl Default for Status {
             eq_error: String::new(),
             eq_backend: "none".into(),
             eq_presets: Vec::new(),
+            mic_status: "off".into(),
+            mic_error: String::new(),
             pause_on_removal: true,
             resume_on_insert: true,
             auto_reconnect: true,
             preferred_device: String::new(),
             eq_auto_load: true,
+            mic_source: true,
             start_on_login: false,
         }
     }

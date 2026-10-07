@@ -278,6 +278,22 @@
   color: #89b4fa;
 }
 
+/* Mic source note (MicStatus: streaming | error | unavailable; hidden otherwise) */
+
+.ap-mic-status {
+  font-size: 11px;
+  color: #a6adc8;
+}
+
+.ap-mic-status.ap-mic-streaming {
+  color: #a6e3a1;
+}
+
+.ap-mic-status.ap-mic-error,
+.ap-mic-status.ap-mic-unavailable {
+  color: #f38ba8;
+}
+
 /* ─── Open app button ─────────────────────────────── */
 
 .ap-open-app {

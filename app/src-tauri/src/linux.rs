@@ -288,6 +288,7 @@ impl Client {
             "resume_on_insert" => ("ResumeOnInsert", Value::Bool(json_bool(&value)?)),
             "auto_reconnect" => ("AutoReconnect", Value::Bool(json_bool(&value)?)),
             "eq_auto_load" => ("EqAutoLoad", Value::Bool(json_bool(&value)?)),
+            "mic_source" => ("MicSource", Value::Bool(json_bool(&value)?)),
             "preferred_device" => {
                 let mac = value
                     .as_str()
@@ -566,11 +567,14 @@ fn apply_prop(s: &mut Status, name: &str, v: &Value) {
         "EqStatus" => set(&mut s.eq_status, v_string(v)),
         "EqError" => set(&mut s.eq_error, v_string(v)),
         "EqBackend" => set(&mut s.eq_backend, v_string(v)),
+        "MicStatus" => set(&mut s.mic_status, v_string(v)),
+        "MicError" => set(&mut s.mic_error, v_string(v)),
         "PauseOnRemoval" => set(&mut s.pause_on_removal, v_bool(v)),
         "ResumeOnInsert" => set(&mut s.resume_on_insert, v_bool(v)),
         "AutoReconnect" => set(&mut s.auto_reconnect, v_bool(v)),
         "PreferredDevice" => set(&mut s.preferred_device, v_string(v)),
         "EqAutoLoad" => set(&mut s.eq_auto_load, v_bool(v)),
+        "MicSource" => set(&mut s.mic_source, v_bool(v)),
         _ => {}
     }
 }

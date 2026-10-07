@@ -391,7 +391,40 @@
     const showMic = connected && !isHeadphones() && isLinux();
     $("row-mic").hidden = !showMic;
     if (showMic) setChecked($("mic-group"), s.mic_mode || "auto");
-    $("features-card").hidden = !(any || showMic);
+    const showMicSource = renderMicSource(s, connected && isLinux());
+    $("features-card").hidden = !(any || showMic || showMicSource);
+  }
+
+  // MicStatus → [badge label, tone]. "off" (setting disabled, no session, or a
+  // daemon too old to have a mic source) hides the row instead of showing a badge.
+  const MIC_BADGES = {
+    idle: ["Ready", "neutral"],
+    starting: ["Starting", "warn"],
+    streaming: ["In use", "ok"],
+    unavailable: ["Unavailable", "neutral"],
+    error: ["Error", "bad"],
+  };
+
+  // Show the state of the "AirPods Microphone" source while connected.
+  // Returns whether the row is visible, so the Controls card knows to show.
+  function renderMicSource(s, connected) {
+    const status = s.mic_status || "off";
+    const show = connected && status !== "off";
+    $("row-micsrc").hidden = !show;
+    const msg = $("mic-message");
+    let text = "";
+    if (show) {
+      const [label, tone] = MIC_BADGES[status] || [status, "neutral"];
+      const badge = $("mic-badge");
+      badge.textContent = label;
+      badge.dataset.tone = tone;
+      if (status === "unavailable") text = s.mic_error || "The AirPods microphone can't be offered on this system.";
+      else if (status === "error") text = s.mic_error || "The AirPods microphone stopped working.";
+    }
+    msg.hidden = !text;
+    msg.textContent = text;
+    msg.dataset.tone = "bad";
+    return show;
   }
 
   // ── Equalizer ──────────────────────────────────────────────────────────

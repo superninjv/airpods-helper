@@ -36,6 +36,8 @@ let state = {
   eqPreset: "",
   eqStatus: "off",
   eqError: "",
+  micStatus: "off",
+  micError: "",
   model: "", modelName: "", firmware: "",
   features: [] as string[],
 }
@@ -74,6 +76,9 @@ function sync() {
     eqPreset: gp("EqPreset") ?? "",
     eqStatus: gp("EqStatus") ?? "off",
     eqError: gp("EqError") ?? "",
+    // Daemons older than the mic source don't have these; treat as off.
+    micStatus: gp("MicStatus") ?? "off",
+    micError: gp("MicError") ?? "",
     model: gp("Model") ?? "",
     modelName: gp("ModelName") ?? "",
     firmware: gp("Firmware") ?? "",
@@ -268,9 +273,14 @@ export default function AirPodsBattery() {
   }
   micRow.append(micBtnBox)
 
+  // "AirPods Microphone" source state: a small note while something records
+  // from it, or the reason it can't be offered. Hidden otherwise.
+  const micStatusLabel = new Gtk.Label({ label: "", wrap: true, xalign: 0, maxWidthChars: 38, cssClasses: ["ap-mic-status"], visible: false })
+
   togglesBox.append(caRow)
   togglesBox.append(obRow)
   togglesBox.append(micRow)
+  togglesBox.append(micStatusLabel)
 
   // ── EQ section ──
   const eqBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4, cssClasses: ["ap-section"] })
@@ -408,7 +418,16 @@ export default function AirPodsBattery() {
     caRow.visible = has("ca")
     obRow.visible = has("one_bud_anc")
     micRow.visible = !headphones
-    togglesBox.visible = caRow.visible || obRow.visible || micRow.visible
+
+    // Mic source note (any model: the daemon doesn't gate it on features).
+    let micNote = ""
+    if (s.micStatus === "streaming") micNote = "Mic in use"
+    else if (s.micStatus === "error" || s.micStatus === "unavailable") micNote = s.micError || "AirPods microphone unavailable"
+    micStatusLabel.label = micNote
+    micStatusLabel.visible = micNote !== ""
+    micStatusLabel.cssClasses = ["ap-mic-status", `ap-mic-${s.micStatus}`]
+
+    togglesBox.visible = caRow.visible || obRow.visible || micRow.visible || micStatusLabel.visible
 
     updatingToggles = true
     if (has("ca")) caSwitch.active = s.conversationalAwareness

@@ -699,6 +699,8 @@ summary + .toggle-row { border-top: none; }
 }
 .eq-message[data-tone="warn"] { background: var(--warn-soft); color: var(--warn); }
 .eq-message[data-tone="bad"] { background: var(--bad-soft); color: var(--bad); }
+/* The mic source message sits under a control row, not under chips. */
+#mic-message { margin: 0; }
 
 .eq-graph {
   margin: 12px 0 0;

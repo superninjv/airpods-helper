@@ -180,6 +180,11 @@
           <span id="mic-title" class="toggle-name">Microphone</span>
           <div id="mic-group" class="segmented small" role="radiogroup" aria-labelledby="mic-title"></div>
         </div>
+        <div id="row-micsrc" class="control-row">
+          <span class="toggle-name">AirPods Microphone input</span>
+          <span id="mic-badge" class="badge">Off</span>
+        </div>
+        <p id="mic-message" class="eq-message" role="status" hidden></p>
       </section>
 
       <!-- Settings -->
@@ -200,6 +205,10 @@
         <div class="toggle-row">
           <label for="s-eqauto"><span class="toggle-name">Apply EQ when AirPods connect</span></label>
           <input id="s-eqauto" class="switch" type="checkbox" role="switch" data-setting="eq_auto_load">
+        </div>
+        <div class="toggle-row">
+          <label for="s-micsrc"><span class="toggle-name">Microphone source</span><span class="toggle-desc">Offer an “AirPods Microphone” input that works while music stays in stereo</span></label>
+          <input id="s-micsrc" class="switch" type="checkbox" role="switch" data-setting="mic_source">
         </div>
         <div class="toggle-row">
           <label for="s-login"><span class="toggle-name">Open at login</span><span class="toggle-desc">Starts minimized to the tray</span></label>

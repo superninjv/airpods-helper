@@ -2,7 +2,8 @@
 // browser (no Tauri, no daemon, no AirPods). Not shipped: tauri.conf.json
 // serves ../src only. Open app/dev/mock.html?scenario=<name>, where <name> is
 // one of: pro2 (default), max, disconnected, absent, starting, editor,
-// eq-waiting, eq-error. Every command is simulated in memory.
+// eq-waiting, eq-error, mic-streaming, mic-unavailable, mic-error.
+// Every command is simulated in memory.
 "use strict";
 
 (function () {
@@ -66,13 +67,26 @@
     eq_presets: presetList(),
     pause_on_removal: true, resume_on_insert: true, auto_reconnect: true,
     preferred_device: "", eq_auto_load: true, start_on_login: false,
+    mic_status: "idle", mic_error: "", mic_source: true,
   };
+
+  // What the mic source reports while connected with mic_source on (the
+  // scenario can change it); off otherwise, like the daemon.
+  let micWhenOn = { mic_status: "idle", mic_error: "" };
+  const micProps = () =>
+    state.connected && state.mic_source ? micWhenOn : { mic_status: "off", mic_error: "" };
 
   const SCENARIOS = {
     pro2: {},
     editor: {},
     "eq-waiting": { eq_status: "waiting", eq_preset: "vocal-clarity" },
     "eq-error": { eq_status: "error", eq_error: "filter-chain module failed to load: libpipewire-module-filter-chain not found" },
+    "mic-streaming": { mic_status: "streaming" },
+    "mic-unavailable": {
+      mic_status: "unavailable",
+      mic_error: "libfdk-aac is not installed (install libfdk-aac / libfdk-aac2 to use the AirPods microphone)",
+    },
+    "mic-error": { mic_status: "error", mic_error: "the AirPods stopped sending microphone audio" },
     max: {
       model: "A2096", model_name: "AirPods Max", firmware: "6F8", features: ["anc", "headphones"],
       battery_left: 64, battery_right: 64, battery_case: -1, charging_left: true, charging_right: true,
@@ -83,18 +97,19 @@
       connected: false, address: "", model: "", model_name: "", firmware: "", features: [],
       battery_left: -1, battery_right: -1, battery_case: -1, charging_case: false,
       ear_left: false, ear_right: false, anc_mode: "off", eq_status: "waiting", eq_preset: "late-night",
-      preferred_device: "AC:90:85:12:34:56",
+      preferred_device: "AC:90:85:12:34:56", mic_status: "off",
     },
     absent: {
       daemon: "absent", connected: false,
       daemon_error: "The AirPods daemon failed to start: Process org.costa.AirPods exited with status 1",
       features: [], eq_presets: [], version: "", eq_backend: "none", eq_status: "off", eq_preset: "",
-      model_name: "", model: "", firmware: "",
+      model_name: "", model: "", firmware: "", mic_status: "off",
     },
-    starting: { daemon: "starting", connected: false, features: [], eq_presets: [], version: "" },
+    starting: { daemon: "starting", connected: false, features: [], eq_presets: [], version: "", mic_status: "off" },
   };
 
   const state = Object.assign({}, base, SCENARIOS[scenario] || {});
+  if (state.mic_status !== "off") micWhenOn = { mic_status: state.mic_status, mic_error: state.mic_error };
   const listeners = {};
 
   function emit(event, payload) {
@@ -127,11 +142,15 @@
           throw "Invalid MAC address";
         }
         state[args.key] = args.value;
+        if (args.key === "mic_source") Object.assign(state, micProps());
         break;
       case "set_start_on_login": state.start_on_login = args.enabled; break;
       case "list_paired": await sleep(200); return PAIRED;
       case "connect_device": await sleep(1200); throw "BlueZ connect: br-connection-page-timeout";
-      case "disconnect_device": Object.assign(state, SCENARIOS.disconnected); break;
+      case "disconnect_device":
+        Object.assign(state, SCENARIOS.disconnected);
+        Object.assign(state, micProps());
+        break;
       case "reconnect": break;
       case "pair_device": await sleep(1500); throw "pair: org.bluez.Error.AuthenticationFailed";
       case "quick_pair_scan":
