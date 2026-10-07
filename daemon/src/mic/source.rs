@@ -145,7 +145,11 @@ impl PipeSource {
         }
     }
 
-    /// How many streams are recording from this source right now.
+    /// How many streams are recording from this source right now. Volume
+    /// meters (pavucontrol, desktop settings, bar widgets) attach peak-detect
+    /// streams to every source; counting those would keep the buds streaming
+    /// whenever a mixer window is open, so they're skipped, and so are corked
+    /// (paused) streams.
     pub async fn consumers(&self) -> Result<usize, String> {
         let sources = run_cmd("pactl", &["list", "short", "sources"])
             .await
@@ -154,13 +158,27 @@ impl PipeSource {
             .lines()
             .map(|l| l.split('\t').collect::<Vec<_>>())
             .find(|c| c.len() >= 2 && c[1] == self.name)
-            .map(|c| c[0].to_string())
+            .and_then(|c| c[0].parse::<u64>().ok())
         else {
             return Err("the microphone source disappeared".into());
         };
+
+        // The JSON listing carries the properties and flags we need, and
+        // unlike the long text format it isn't translated.
+        if let Ok(json) = run_cmd("pactl", &["-f", "json", "list", "source-outputs"]).await
+            && let Ok(outputs) = serde_json::from_str::<Vec<SourceOutput>>(&json)
+        {
+            return Ok(outputs
+                .iter()
+                .filter(|o| o.source == index && o.is_recorder())
+                .count());
+        }
+
+        // pactl older than 16 has no JSON output; count every stream.
         let outputs = run_cmd("pactl", &["list", "short", "source-outputs"])
             .await
             .map_err(|e| e.to_string())?;
+        let index = index.to_string();
         Ok(outputs
             .lines()
             .filter(|l| l.split('\t').nth(1) == Some(index.as_str()))
@@ -173,6 +191,42 @@ impl PipeSource {
             warn!("failed to unload the microphone source: {e}");
         }
         let _ = std::fs::remove_file(&self.fifo);
+    }
+}
+
+/// Peak-detect streams ask for a few dozen samples per second
+/// (pavucontrol, GNOME's and KDE's volume meters all use 25 Hz); a real
+/// recorder never goes below 8 kHz. Anything under this is a meter.
+const PEAK_METER_MAX_RATE: u32 = 1000;
+
+/// The fields of one `pactl -f json list source-outputs` entry we look at.
+#[derive(serde::Deserialize)]
+struct SourceOutput {
+    source: u64,
+    #[serde(default)]
+    corked: bool,
+    #[serde(default)]
+    sample_specification: String,
+    #[serde(default)]
+    properties: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl SourceOutput {
+    /// Whether this stream actually wants the audio. pipewire-pulse marks
+    /// peak-detect streams `stream.monitor = "true"`; PulseAudio has no such
+    /// property, so the sample rate ("float32le 1ch 25Hz") is the fallback.
+    fn is_recorder(&self) -> bool {
+        if self.corked {
+            return false;
+        }
+        if self.properties.get("stream.monitor").and_then(|v| v.as_str()) == Some("true") {
+            return false;
+        }
+        let rate = self
+            .sample_specification
+            .split_whitespace()
+            .find_map(|part| part.strip_suffix("Hz")?.parse::<u32>().ok());
+        !matches!(rate, Some(rate) if rate < PEAK_METER_MAX_RATE)
     }
 }
 

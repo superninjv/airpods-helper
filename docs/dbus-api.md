@@ -45,7 +45,7 @@ they change, so clients should subscribe instead of polling.
 
 ## Microphone source (read-only)
 
-While the AAP session is up and `MicSource` is on, the daemon offers an audio source named `airpods_mic` ("AirPods Microphone") that carries the buds' microphone over AAP (AAC-ELD, opcode `0x58`) while A2DP keeps playing. The buds only stream while at least one stream records from the source.
+While the AAP session is up and `MicSource` is on, the daemon offers an audio source named `airpods_mic` ("AirPods Microphone") that carries the buds' microphone over AAP (AAC-ELD, opcode `0x58`) while A2DP keeps playing. The buds only stream while at least one stream records from the source; peak-detect streams (volume meters) and corked streams don't count.
 
 | Property | Type | Notes |
 |---|---|---|
