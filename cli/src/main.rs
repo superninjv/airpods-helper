@@ -595,7 +595,7 @@ async fn doctor(json: bool) -> anyhow::Result<()> {
         .chain(path_dirs.split(':').map(str::to_string))
         .map(|dir| format!("{dir}/airpods-daemon"))
         .find(|p| std::path::Path::new(p).is_file());
-    check("daemon binary", daemon.is_some(), daemon.clone().map_or("not found".into(), |p| format!("found at {p}")), Some("install with `make install`, the .deb, or the PKGBUILD"), false);
+    check("daemon binary", daemon.is_some(), daemon.clone().map_or("not found".into(), |p| format!("found at {p}")), Some("install from the release tarball, the .deb, or the PKGBUILD"), false);
     if let Some(p) = &daemon {
         let caps = std::process::Command::new("getcap").arg(p).output().ok().filter(|o| o.status.success());
         let text = caps.as_ref().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();

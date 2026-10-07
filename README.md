@@ -59,8 +59,11 @@ systemctl --user enable --now airpods-daemon.service
 
 **From source.** This needs a Rust toolchain and the D-Bus development headers (`libdbus-1-dev` or `dbus-devel`).
 ```bash
-make install-system   # /usr/local, runs setcap via sudo
-# or: make install     # ~/.local; then run the setcap command it prints
+cargo build --release
+install -Dm755 -t ~/.local/bin target/release/airpods-daemon target/release/airpods-cli
+sudo setcap 'cap_net_raw,cap_net_admin+eip' ~/.local/bin/airpods-daemon
+install -Dm644 -t ~/.config/systemd/user daemon/airpods-daemon.service
+install -Dm644 -t ~/.local/share/dbus-1/services daemon/org.costa.AirPods.service
 systemctl --user enable --now airpods-daemon.service
 ```
 
@@ -149,7 +152,7 @@ You can also create and edit presets in the desktop app, which draws the frequen
   bar.append(AirPodsBattery())
   ```
 
-  `make install` links `widget/` into `~/.config/ags/widget/airpods` if AGS is set up. Include `widget/style.css` in your stylesheet.
+  Link `widget/` into your AGS config: `ln -s "$PWD/widget" ~/.config/ags/widget/airpods`. Include `widget/style.css` in your stylesheet.
 - **Anything else** can use the D-Bus interface, which is documented in [docs/dbus-api.md](docs/dbus-api.md). Properties emit `PropertiesChanged`, so there's no need to poll.
 
 ## Configuration

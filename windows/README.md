@@ -97,8 +97,7 @@ POST bodies are JSON, e.g.:
 ## Known Limitations
 
 1. **L2CAP via Winsock**: Uses `AF_BTH + BTHPROTO_L2CAP` which provides stream-oriented
-   sockets. If packet boundary issues arise, a KMDF L2CAP bridge driver may be needed
-   (see `NOTES.md`).
+   sockets. If packet boundary issues arise, a KMDF L2CAP bridge driver may be needed.
 
 2. **No EQ support**: PipeWire EQ is Linux-specific. Windows audio equalization would
    require a different approach (e.g., Windows Audio Processing Objects).
