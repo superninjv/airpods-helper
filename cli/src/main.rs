@@ -65,7 +65,7 @@ enum Command {
     },
     /// Show settings, or change one: `set <name> <value>`
     Settings,
-    /// Change a setting (pause-on-removal, resume-on-insert, auto-reconnect, eq-auto-load, preferred-device)
+    /// Change a setting (pause-on-removal, resume-on-insert, auto-reconnect, eq-auto-load, preferred-device, mic-source)
     Set { name: String, value: String },
     /// Connect to paired AirPods by MAC address
     Connect { address: String },
@@ -121,6 +121,7 @@ const SETTINGS: &[(&str, &str, bool)] = &[
     ("auto-reconnect", "AutoReconnect", true),
     ("eq-auto-load", "EqAutoLoad", true),
     ("preferred-device", "PreferredDevice", false),
+    ("mic-source", "MicSource", true),
 ];
 
 struct Client {
@@ -417,6 +418,12 @@ fn status(p: &Props, json: bool) {
         row("Ears", format!("L {} · R {}", ear(b(p, "EarLeft")), ear(b(p, "EarRight"))));
     }
     row("Microphone", s(p, "MicMode"));
+    // The AirPods mic as an audio source (streams only while something records).
+    row("Mic source", s(p, "MicStatus"));
+    let mic_err = s(p, "MicError");
+    if !mic_err.is_empty() {
+        row("", format!("⚠ {mic_err}"));
+    }
     let preset = s(p, "EqPreset");
     let eq = if preset.is_empty() { "off".to_string() } else { format!("{preset} ({})", s(p, "EqStatus")) };
     row("EQ", eq);
@@ -624,6 +631,15 @@ async fn doctor(json: bool) -> anyhow::Result<()> {
             _ => "no supported audio server — EQ unavailable".into(),
         };
         check("EQ backend", ok, detail, Some("EQ needs PipeWire, or PulseAudio with pactl/pacat/parec"), true);
+        let mic_status = s(p, "MicStatus");
+        let mic_err = s(p, "MicError");
+        let (ok, detail) = match mic_status.as_str() {
+            "unavailable" | "error" => (false, mic_err),
+            "" => (true, "the running daemon predates the mic source; restart it after updating".into()),
+            "off" if !b(p, "Connected") => fdk_aac_installed(),
+            status => (true, format!("{status} — record from \"AirPods Microphone\" to use it")),
+        };
+        check("mic source", ok, detail, Some("install libfdk-aac (Arch: libfdk-aac; Debian/Ubuntu: libfdk-aac2 from non-free/multiverse)"), true);
         let connected = b(p, "Connected");
         let name = s(p, "ModelName");
         check("AirPods", connected, if connected { format!("connected — {name}") } else { "none connected".into() }, Some("open the case near this computer, or `airpods-cli connect <MAC>`"), true);
@@ -647,6 +663,19 @@ async fn doctor(json: bool) -> anyhow::Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Whether the AAC-ELD decoder the daemon loads at runtime is installed.
+/// Only asked while no AirPods are connected; once connected the daemon's
+/// own MicStatus is the answer.
+fn fdk_aac_installed() -> (bool, String) {
+    match std::process::Command::new("ldconfig").arg("-p").output() {
+        Ok(out) if String::from_utf8_lossy(&out.stdout).contains("libfdk-aac.so.2") => {
+            (true, "libfdk-aac found; the source appears once AirPods connect".into())
+        }
+        Ok(_) => (false, "libfdk-aac not installed — the AirPods microphone can't be decoded".into()),
+        Err(_) => (true, "couldn't check for libfdk-aac (no ldconfig); see MicStatus once connected".into()),
+    }
 }
 
 #[cfg(test)]
@@ -675,3 +704,4 @@ mod tests {
         assert_eq!(slug("--x__y--"), "x-y");
     }
 }
+

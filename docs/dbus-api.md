@@ -43,6 +43,15 @@ they change, so clients should subscribe instead of polling.
 | `EqError` | `s` | Human-readable reason when `EqStatus` is `error`/`unsupported`, else `""` |
 | `EqBackend` | `s` | `pipewire` (WirePlumber ≥ 0.5 smart filter — transparent, default sink untouched), `pipewire-legacy` (older WirePlumber — EQ sink becomes the default output while active), `pulseaudio`, or `none` |
 
+## Microphone source (read-only)
+
+While the AAP session is up and `MicSource` is on, the daemon offers an audio source named `airpods_mic` ("AirPods Microphone") that carries the buds' microphone over AAP (AAC-ELD, opcode `0x58`) while A2DP keeps playing. The buds only stream while at least one stream records from the source.
+
+| Property | Type | Notes |
+|---|---|---|
+| `MicStatus` | `s` | `off` (disabled or no AirPods session) · `unavailable` (no libfdk-aac or no PulseAudio-compatible server) · `idle` (source offered, nobody recording) · `starting` (asked the buds to stream, no audio yet) · `streaming` · `error` (see `MicError`; clears when the last recorder leaves) |
+| `MicError` | `s` | Human-readable reason for `unavailable`/`error`, else `""` |
+
 ## Settings (read-write properties, persisted to `config.toml`)
 
 | Property | Type | Default |
@@ -52,6 +61,7 @@ they change, so clients should subscribe instead of polling.
 | `AutoReconnect` | `b` | `true` |
 | `PreferredDevice` | `s` | `""` — MAC; when set, other AirPods are ignored |
 | `EqAutoLoad` | `b` | `true` — apply `EqPreset` whenever the AirPods' Bluetooth link comes up (independent of the AAP control session) |
+| `MicSource` | `b` | `true` — offer the `airpods_mic` source (`[mic] enabled`). Turning it off stops any stream and removes the source. |
 
 Setting an invalid value (e.g. malformed MAC) returns `org.freedesktop.DBus.Error.InvalidArgs`. Changes made through D-Bus emit `PropertiesChanged`; hand edits to `config.toml` take effect on the daemon's next config write or restart and are not signalled. If `config.toml` doesn't parse, setters fail rather than overwrite it.
 

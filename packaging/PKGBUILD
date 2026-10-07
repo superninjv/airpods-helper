@@ -10,7 +10,8 @@ depends=('bluez' 'dbus' 'libcap')
 makedepends=('rust' 'cargo')
 optdepends=('pipewire: parametric EQ (preferred backend)'
             'wireplumber: EQ routing with pipewire (>= 0.5 for transparent smart-filter mode)'
-            'libpulse: pactl/pacat/parec for EQ on PulseAudio-only systems'
+            'libpulse: pactl/pacat/parec for EQ on PulseAudio-only systems, and the mic source'
+            'libfdk-aac: AirPods microphone source (decoded at runtime)'
             'ags: GTK4 desktop widgets for bar integration')
 install="$pkgname.install"
 source=("$pkgname-$pkgver.tar.gz::https://github.com/superninjv/$pkgname/archive/v$pkgver.tar.gz"

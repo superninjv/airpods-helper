@@ -39,6 +39,8 @@ pub struct AirPodsInterface {
     config: SharedConfig,
     cmd_tx: SharedCmdTx,
     control: mpsc::Sender<Control>,
+    /// Tells the mic supervisor when the `MicSource` setting changes.
+    mic_enabled: watch::Sender<bool>,
 }
 
 fn failed(msg: impl std::fmt::Display) -> fdo::Error {
@@ -251,6 +253,17 @@ impl AirPodsInterface {
         self.s().eq_backend
     }
 
+    // ─── Microphone properties ────────────────────────────────────────
+
+    #[zbus(property)]
+    fn mic_status(&self) -> String {
+        self.s().mic_status
+    }
+    #[zbus(property)]
+    fn mic_error(&self) -> String {
+        self.s().mic_error
+    }
+
     // ─── Settings (read-write, persisted) ─────────────────────────────
 
     #[zbus(property)]
@@ -287,6 +300,17 @@ impl AirPodsInterface {
     #[zbus(property)]
     fn set_eq_auto_load(&self, v: bool) -> zbus::Result<()> {
         self.save_setting(|c| c.eq.auto_load = v)
+    }
+
+    #[zbus(property)]
+    fn mic_source(&self) -> bool {
+        config::read(&self.config, |c| c.mic.enabled)
+    }
+    #[zbus(property)]
+    fn set_mic_source(&self, v: bool) -> zbus::Result<()> {
+        self.save_setting(|c| c.mic.enabled = v)?;
+        self.mic_enabled.send_replace(v);
+        Ok(())
     }
 
     #[zbus(property)]
@@ -497,12 +521,14 @@ pub async fn serve(
     config: SharedConfig,
     cmd_tx: SharedCmdTx,
     control: mpsc::Sender<Control>,
+    mic_enabled: watch::Sender<bool>,
 ) -> anyhow::Result<Connection> {
     let iface = AirPodsInterface {
         state,
         config,
         cmd_tx,
         control,
+        mic_enabled,
     };
     let connection = Connection::session().await?;
     connection.object_server().at(OBJECT_PATH, iface).await?;
@@ -549,6 +575,8 @@ fn state_properties(s: &AirPodsState) -> Vec<(&'static str, Value<'static>)> {
         ("EqStatus", s.eq_status.clone().into()),
         ("EqError", s.eq_error.clone().into()),
         ("EqBackend", s.eq_backend.clone().into()),
+        ("MicStatus", s.mic_status.clone().into()),
+        ("MicError", s.mic_error.clone().into()),
     ]
 }
 

@@ -3,6 +3,7 @@ mod config;
 mod dbus;
 mod eq;
 mod l2cap;
+mod mic;
 mod mpris;
 mod state;
 
@@ -20,6 +21,9 @@ use crate::dbus::{Control, SharedCmdTx};
 use crate::eq::{EqManager, EqPreset};
 use crate::state::{SharedState, create_shared_state};
 use aap::parser::AapEvent;
+
+/// How long shutdown waits for the AAP session to send its queued commands.
+const SESSION_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Messages from an L2CAP session task, tagged with its session id so late
 /// messages from a superseded session are ignored.
@@ -39,6 +43,8 @@ struct Daemon {
     config: SharedConfig,
     cmd_tx: SharedCmdTx,
     session_tx: mpsc::Sender<SessionMsg>,
+    /// Mic audio SDUs from the current session, for the mic supervisor.
+    audio_tx: mpsc::Sender<Vec<u8>>,
     /// Delayed AAP session retries come back through here.
     retry_tx: mpsc::Sender<Address>,
     /// The AirPods whose Bluetooth link is up and that we manage. Separate
@@ -93,8 +99,26 @@ async fn main() -> anyhow::Result<()> {
     let (bluez_tx, mut bluez_rx) = mpsc::channel::<BlueZEvent>(16);
     let (session_tx, mut session_rx) = mpsc::channel::<SessionMsg>(64);
     let (retry_tx, mut retry_rx) = mpsc::channel::<Address>(4);
+    // ~2s of mic audio at ~33 SDUs/s; beyond that the reader drops SDUs.
+    let (audio_tx, audio_rx) = mpsc::channel::<Vec<u8>>(64);
+    let (mic_enabled_tx, mic_enabled_rx) =
+        tokio::sync::watch::channel(config::read(&config, |c| c.mic.enabled));
 
-    let connection = dbus::serve(state.clone(), config.clone(), cmd_tx.clone(), control_tx).await?;
+    let connection = dbus::serve(
+        state.clone(),
+        config.clone(),
+        cmd_tx.clone(),
+        control_tx,
+        mic_enabled_tx,
+    )
+    .await?;
+    let mic = mic::spawn(
+        state.clone(),
+        cmd_tx.clone(),
+        audio_rx,
+        mic_enabled_rx,
+        mic::SourceSpec::new(config::read(&config, |c| c.mic.sample_rate)),
+    );
     tokio::spawn(dbus::run_property_notifier(
         connection.clone(),
         state.subscribe(),
@@ -111,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         config,
         cmd_tx,
         session_tx,
+        audio_tx,
         retry_tx,
         bt_device: None,
         aap_retries: 0,
@@ -156,9 +181,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     info!("shutting down");
+    // Mic first, while the AAP session can still carry STOP to the buds.
+    mic.shutdown().await;
     daemon.eq.shutdown().await;
+    // Close the command channel instead of aborting, so the session sends
+    // anything still queued (the mic STOP above) before it exits.
+    *daemon.cmd_tx.lock().await = None;
     if let Some(s) = daemon.session.take() {
-        s.handle.abort();
+        let abort = s.handle.abort_handle();
+        if tokio::time::timeout(SESSION_DRAIN_TIMEOUT, s.handle).await.is_err() {
+            abort.abort();
+        }
     }
     if let Some(r) = daemon.reconnect.take() {
         r.abort();
@@ -232,6 +265,7 @@ impl Daemon {
 
         let state = self.state.clone();
         let session_tx = self.session_tx.clone();
+        let audio_tx = self.audio_tx.clone();
         let handle = tokio::spawn(async move {
             let (event_tx, mut event_rx) = mpsc::channel::<AapEvent>(64);
             let forward_tx = session_tx.clone();
@@ -242,7 +276,7 @@ impl Daemon {
                     }
                 }
             });
-            match l2cap::run(addr, state, rx, event_tx).await {
+            match l2cap::run(addr, state, rx, event_tx, audio_tx).await {
                 Ok(()) => info!("AAP session ended"),
                 Err(e) => error!("AAP session error: {e}"),
             }

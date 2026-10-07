@@ -13,6 +13,7 @@ AirPods support for Linux. A Rust daemon owns the AirPods session and exposes it
   - `dbus.rs` — `org.costa.AirPods`. **All `PropertiesChanged` come from `run_property_notifier`, which diffs state snapshots** — never emit property changes by hand. Settings are writable properties persisted via `config::update_config`.
   - `config.rs` — `SharedConfig` (RwLock); `save()` uses toml_edit so user comments survive.
   - `mpris.rs` — pause on bud removal, resume only what we paused.
+  - `mic/` — mic source: `mod.rs` (supervisor: source lifecycle, START/STOP on demand, stall restarts, CA pause), `fdk.rs` (runtime-loaded libfdk-aac decoder; test-only encoder for the tracer), `source.rs` (`module-pipe-source` + FIFO, recorder counting via `pactl subscribe`).
   - `eq/` — `preset.rs` (load/validate/save; built-ins are `include_str!`'d from `eq-presets/`), `dsp.rs` (RBJ biquads), `pipewire.rs` (filter-chain in a supervised `pipewire -c` child; smart filter on WirePlumber ≥ 0.5, else pinned target + default-sink redirect), `pulse.rs` (null sink → parec → biquads → pacat), `mod.rs` (`EqManager`: backend detection, status, restore on stop).
 - **`cli/`** — `airpods-cli`; reads state with one `GetAll`.
 - **`app/`** — Tauri app, D-Bus client of the daemon. `app/dev/` has a browser mock (`mock.html`) and a fake daemon (`mock-daemon.py`) for UI work without AirPods.
@@ -39,5 +40,5 @@ Never play audio in tests; verify routing structurally (`pw-link -l`, `pactl lis
 - L2CAP PSM 0x1001 (BR/EDR). Handshake → `SET_FEATURES` (host caps `0xFF`, needed for Adaptive/CA during playback) → subscribe → `ENABLE_ALL_LISTENING_MODES` (re-sent before switching to Off, which iCloud-synced settings can disable).
 - Battery entries flagged disconnected carry stale levels → exposed as `-1`. AirPods Max report one `0x01` (headphones) component, mirrored into left/right.
 - Device-info strings are positional (empty fields included).
-- Stereo + mic: AirPods can stream the mic as AAC-ELD over AAP opcode `0x58` while A2DP keeps playing (LibrePods PR #655). Not implemented here yet — it's the next big feature. Opcodes `0x30`/`0x31` are BLE advertisement key requests, not an LE Audio gate.
+- Stereo + mic: AirPods stream the mic as AAC-ELD over AAP opcode `0x58` while A2DP keeps playing (LibrePods PR #655, verified there on Pro 3 only). Bytes, framing and ASC: `aap/src/mic.rs`. Daemon side: `daemon/src/mic/` — libfdk-aac is dlopen'd (never linked; non-free on some distros), the source is `module-pipe-source` via pactl (PipeWire and PulseAudio alike), and START is only sent while a source-output is attached. Played out at 64 kHz although the ASC says 48 kHz (`mic::DEFAULT_SAMPLE_RATE` has the reasoning). Wiring tracer without AirPods: `cargo test -p airpods-daemon mic_tracer -- --ignored --nocapture`. Opcodes `0x30`/`0x31` are BLE advertisement key requests, not an LE Audio gate.
 - Sub-command table and sources: `aap/src/lib.rs`, LibrePods docs.

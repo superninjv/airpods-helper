@@ -36,6 +36,9 @@ pub struct AirPodsState {
     pub eq_status: String,
     pub eq_error: String,
     pub eq_backend: String,
+    // Microphone — owned by the mic supervisor, survives device resets
+    pub mic_status: String,
+    pub mic_error: String,
 }
 
 impl Default for AirPodsState {
@@ -69,6 +72,8 @@ impl Default for AirPodsState {
             eq_status: "off".to_string(),
             eq_error: String::new(),
             eq_backend: "none".to_string(),
+            mic_status: "off".to_string(),
+            mic_error: String::new(),
         }
     }
 }
@@ -112,8 +117,8 @@ impl StateManager {
         self.rx.borrow().clone()
     }
 
-    /// Reset device state to disconnected defaults. EQ fields are kept: they
-    /// describe the user's selection and the audio backend, not the device.
+    /// Reset device state to disconnected defaults. EQ and mic fields are kept:
+    /// their own supervisors publish them, and they follow the session anyway.
     pub fn reset(&self) {
         self.tx.send_if_modified(|state| {
             let fresh = AirPodsState {
@@ -121,6 +126,8 @@ impl StateManager {
                 eq_status: state.eq_status.clone(),
                 eq_error: state.eq_error.clone(),
                 eq_backend: state.eq_backend.clone(),
+                mic_status: state.mic_status.clone(),
+                mic_error: state.mic_error.clone(),
                 ..AirPodsState::default()
             };
             let changed = *state != fresh;

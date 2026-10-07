@@ -14,6 +14,7 @@ The daemon talks to the AirPods over Bluetooth using Apple's accessory protocol 
 - **Ear detection:** pauses media when you take a bud out and resumes it when you put it back (MPRIS). It only resumes a player it paused itself.
 - **Parametric EQ** on PipeWire or PulseAudio. It has built-in presets and custom presets, and can import AutoEQ files.
 - **Conversational Awareness**, one-bud ANC, volume swipe, and primary microphone selection
+- **Microphone without losing stereo** (experimental): an "AirPods Microphone" source that streams over Apple's own channel, so music and calls stay in A2DP stereo. See [below](#microphone-and-stereo-audio-at-the-same-time).
 - **Pairing:** scan for AirPods in pairing mode, pair, connect, disconnect, and reconnect automatically
 - **Per-model controls:** the daemon detects the model and exposes only the controls it supports
 
@@ -171,13 +172,24 @@ resume_media = true
 [reconnect]
 auto_reconnect = true             # not after you disconnect on purpose
 max_retries = 3
+
+[mic]
+enabled = true                    # offer the "AirPods Microphone" source
 ```
 
 ## Microphone and stereo audio at the same time
 
-**Today:** when an app opens the AirPods microphone, Bluetooth switches from A2DP (stereo, high quality) to the headset profile (mono, 16 kHz), just as on any other headset. `airpods-cli mic` only chooses which bud's microphone is used in that mode.
+Normally, when an app opens a Bluetooth headset's microphone, the link drops from A2DP (stereo, high quality) to the headset profile (mono, 16 kHz). AirPods can avoid that: they can send the microphone as AAC-ELD over the same Apple control channel this project already uses, while A2DP keeps playing.
 
-**What's changing:** AirPods can also send microphone audio over the same Apple control channel this project already uses, as AAC-ELD, while A2DP keeps playing in stereo. LibrePods has a working Linux implementation in [PR #655](https://github.com/librepods-org/librepods/pull/655), tested on AirPods Pro 3. Supporting this here, as a PipeWire microphone source provided by the daemon, is the next major feature. Help is welcome, especially testing on AirPods Pro 2 and AirPods 4.
+**Experimental.** While AirPods are connected, the daemon offers an **AirPods Microphone** source. Pick it in your app or system sound settings like any other mic. Audio servers remember the choice, so it sticks across reconnects. The buds only stream while something is recording from the source: recording starts the stream, and it stops a few seconds after the last app lets go. Conversational Awareness is paused while the mic is live and restored afterwards.
+
+- **Needs** `libfdk-aac`, loaded at runtime (Arch: `libfdk-aac`; Debian/Ubuntu: `libfdk-aac2` from non-free/multiverse), and PipeWire (with pipewire-pulse) or PulseAudio. Without the library, everything else works and `airpods-cli doctor` says what's missing.
+- **Status:** `airpods-cli status` shows `Mic source` as `idle`, `starting`, `streaming`, `error` or `unavailable`, with the reason when something's wrong.
+- **Turn it off:** `airpods-cli set mic-source off`.
+- **Don't** pick the AirPods' own headset-profile input (`bluez_input…`). That one still switches the link to mono.
+- **Tested on:** AirPods Pro 3 in [LibrePods PR #655](https://github.com/librepods-org/librepods/pull/655), where the protocol comes from. Here, the decode-to-source path has been checked with synthetic AAC-ELD; reports from real AirPods Pro 2, AirPods 4 and others are very welcome. If the buds don't answer, the status says so after a few seconds instead of hanging.
+
+`airpods-cli mic left|right|auto` still picks which bud's microphone is primary.
 
 ## Troubleshooting
 

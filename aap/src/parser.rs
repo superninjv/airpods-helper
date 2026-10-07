@@ -140,7 +140,9 @@ pub fn parse(data: &[u8]) -> Result<AapEvent, ParseError> {
         | 0x14
         | 0x4E
         | 0x52
-        | 0x55 => {
+        | 0x55
+        // Mic control replies; audio SDUs are split off before parsing.
+        | mic::CMD_MIC_AUDIO => {
             debug!("unhandled AAP command 0x{cmd:02X}, len={}", data.len());
             Err(ParseError::UnknownCommand(cmd))
         }

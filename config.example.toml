@@ -20,3 +20,11 @@ resume_media = true   # resume when it goes back in
 [reconnect]
 auto_reconnect = true
 max_retries = 3       # backoff: 2s, 4s, 8s, ...
+
+[mic]
+# Offer the AirPods microphone as an "AirPods Microphone" source. The buds only
+# stream while something records from it. Needs libfdk-aac.
+enabled = true
+# Rate the decoded mic audio plays at. Leave it unless voices sound too fast or
+# slow on your model; the codec says 48 kHz but AirPods pace frames for 64 kHz.
+# sample_rate = 64000

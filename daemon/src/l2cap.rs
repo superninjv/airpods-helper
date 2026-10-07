@@ -18,6 +18,9 @@ pub enum L2capCommand {
     SetOneBudAnc(bool),
     SetVolumeSwipe(bool),
     SetMicMode(aap::MicMode),
+    /// Ask the buds to stream the microphone over AAP (opcode 0x58).
+    StartMicStream,
+    StopMicStream,
 }
 
 /// Connect to AirPods via L2CAP and run the read/write loop
@@ -26,6 +29,7 @@ pub async fn run(
     state: SharedState,
     mut cmd_rx: mpsc::Receiver<L2capCommand>,
     event_tx: mpsc::Sender<AapEvent>,
+    audio_tx: mpsc::Sender<Vec<u8>>,
 ) -> io::Result<()> {
     // The caller resets state and announces the disconnect when we return.
     info!(
@@ -77,7 +81,8 @@ pub async fn run(
     seq.send(&aap::commands::HANDSHAKE).await?;
     debug!("sent handshake");
 
-    let mut buf = vec![0u8; 1024];
+    // Mic audio SDUs run past 1 KB, and SEQPACKET truncates silently.
+    let mut buf = vec![0u8; aap::mic::MAX_SDU_LEN];
     let n = recv_timeout(&seq, &mut buf).await?;
     match parser::parse(&buf[..n]) {
         Ok(AapEvent::HandshakeAck) => debug!("handshake ACK received"),
@@ -120,6 +125,11 @@ pub async fn run(
                     Ok(0) => {
                         info!("L2CAP connection closed by remote");
                         break;
+                    }
+                    Ok(n) if aap::mic::is_audio(&buf[..n]) => {
+                        // ~33/s while streaming; straight to the mic supervisor.
+                        // If it falls behind, dropping audio beats stalling control.
+                        let _ = audio_tx.try_send(buf[..n].to_vec());
                     }
                     Ok(n) => {
                         match parser::parse(&buf[..n]) {
@@ -201,6 +211,18 @@ pub async fn run(
                             error!("failed to send mic mode command: {e}");
                         } else {
                             state.update(|s| s.mic_mode = mode.as_str().to_string());
+                        }
+                    }
+                    Some(L2capCommand::StartMicStream) => {
+                        debug!("sending mic stream START");
+                        if let Err(e) = seq.send(&aap::mic::START).await {
+                            error!("failed to send mic START: {e}");
+                        }
+                    }
+                    Some(L2capCommand::StopMicStream) => {
+                        debug!("sending mic stream STOP");
+                        if let Err(e) = seq.send(&aap::mic::STOP).await {
+                            error!("failed to send mic STOP: {e}");
                         }
                     }
                     None => {

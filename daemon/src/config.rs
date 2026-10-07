@@ -12,6 +12,33 @@ pub struct Config {
     pub ear_detection: EarDetectionConfig,
     #[serde(default)]
     pub reconnect: ReconnectConfig,
+    #[serde(default)]
+    pub mic: MicConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MicConfig {
+    /// Offer the AirPods microphone as an audio source (streams only while
+    /// something records from it).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// PCM rate the decoded mic audio is played out at. Only for experiments:
+    /// see `mic::DEFAULT_SAMPLE_RATE` for why it isn't the codec's 48 kHz.
+    #[serde(default = "default_mic_sample_rate")]
+    pub sample_rate: u32,
+}
+
+fn default_mic_sample_rate() -> u32 {
+    crate::mic::DEFAULT_SAMPLE_RATE
+}
+
+impl Default for MicConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sample_rate: default_mic_sample_rate(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -159,6 +186,8 @@ impl Config {
         ear["resume_media"] = value(self.ear_detection.resume_media);
         let rc = table(&mut doc, "reconnect");
         rc["auto_reconnect"] = value(self.reconnect.auto_reconnect);
+        let mic = table(&mut doc, "mic");
+        mic["enabled"] = value(self.mic.enabled);
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

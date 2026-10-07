@@ -6,6 +6,7 @@
 
 mod buds;
 pub mod commands;
+pub mod mic;
 pub mod models;
 pub mod parser;
 pub use buds::BudTracker;
