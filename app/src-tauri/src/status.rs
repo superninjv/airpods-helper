@@ -66,6 +66,7 @@ pub struct QuickPairCandidate {
 /// Everything the UI renders. Field names are the JSON keys used by `main.js`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
+    pub devices_revision: u64,
     pub daemon: DaemonState,
     /// Human-readable reason the daemon is unreachable (empty otherwise).
     pub daemon_error: String,
@@ -122,6 +123,7 @@ pub struct Status {
 impl Default for Status {
     fn default() -> Self {
         Self {
+            devices_revision: 0,
             daemon: DaemonState::Starting,
             daemon_error: String::new(),
             daemon_outdated: false,

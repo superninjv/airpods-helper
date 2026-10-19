@@ -17,7 +17,7 @@ pub const TRAY_ID: &str = "main";
 
 const ANC_MODES: [(&str, &str); 4] = [
     ("off", "Off"),
-    ("noise", "Noise Cancellation"),
+    ("noise", "Noise Cancel"),
     ("transparency", "Transparency"),
     ("adaptive", "Adaptive"),
 ];
@@ -35,7 +35,8 @@ pub fn supported_anc_modes(s: &Status) -> Vec<(&'static str, &'static str)> {
 }
 
 pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
+    let builder = TrayIconBuilder::with_id(TRAY_ID)
+        .icon(crate::tray_icon::icon(-1))
         .tooltip("AirPods Helper")
         .menu(&build_menu(app, &Status::default())?)
         .show_menu_on_left_click(false)
@@ -50,9 +51,6 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 crate::toggle_main_window(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
     builder.build(app)?;
     Ok(())
 }
@@ -77,9 +75,9 @@ fn menu_key(s: &Status) -> String {
     )
 }
 
-/// What was last applied to the tray: (menu fingerprint, tooltip).
+/// What was last applied to the tray: (menu fingerprint, tooltip, battery level).
 #[derive(Default)]
-pub struct TrayCache(Mutex<(String, String)>);
+pub struct TrayCache(Mutex<(String, String, Option<i32>)>);
 
 /// Keep the tray in sync with `s`.
 pub fn sync<R: Runtime>(app: &AppHandle<R>, s: &Status) {
@@ -88,6 +86,13 @@ pub fn sync<R: Runtime>(app: &AppHandle<R>, s: &Status) {
     };
     let cache = app.state::<TrayCache>();
     let mut cache = cache.0.lock().unwrap_or_else(|e| e.into_inner());
+    let level = crate::tray_icon::battery_level(s);
+    if cache.2 != Some(level) {
+        match tray.set_icon(Some(crate::tray_icon::icon(level))) {
+            Ok(()) => cache.2 = Some(level),
+            Err(error) => tracing::warn!("failed to update tray icon: {error}"),
+        }
+    }
     let key = menu_key(s);
     if key != cache.0 {
         match build_menu(app, s) {
@@ -152,11 +157,22 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, s: &Status) -> tauri::Result<Menu<
     if running && !s.eq_presets.is_empty() {
         let mut eq = SubmenuBuilder::with_id(app, "eq", "Equalizer").item(
             &CheckMenuItemBuilder::with_id("eq:", "Off")
-                .checked(s.eq_preset.is_empty())
+                .checked(
+                    s.eq_preset.is_empty()
+                        || (s.eq_preset == "flat"
+                            && !s
+                                .eq_presets
+                                .iter()
+                                .any(|p| p.id == "flat" && p.user_editable)),
+                )
                 .build(app)?,
         );
         eq = eq.separator();
-        for p in &s.eq_presets {
+        for p in s
+            .eq_presets
+            .iter()
+            .filter(|p| p.id != "flat" || p.user_editable)
+        {
             eq = eq.item(
                 &CheckMenuItemBuilder::with_id(format!("eq:{}", p.id), &p.name)
                     .checked(s.eq_preset == p.id)
@@ -175,7 +191,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, s: &Status) -> tauri::Result<Menu<
 
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
     items.push(Box::new(
-        MenuItemBuilder::with_id("toggle", "Show / Hide Window").build(app)?,
+        MenuItemBuilder::with_id("toggle", "Open panel").build(app)?,
     ));
     items.push(Box::new(
         MenuItemBuilder::with_id("quit", "Quit").build(app)?,
@@ -188,7 +204,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, s: &Status) -> tauri::Result<Menu<
 fn on_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     match id {
         "quit" => app.exit(0),
-        "toggle" => crate::toggle_main_window(app),
+        "toggle" => crate::show_main_window(app),
         _ => {
             let backend = app.state::<std::sync::Arc<Backend>>().inner().clone();
             let app = app.clone();

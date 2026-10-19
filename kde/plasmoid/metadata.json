@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "org.costa.airpods",
+        "Name": "AirPods Helper",
+        "Description": "AirPods battery, listening modes and equalizer",
+        "Icon": "audio-headphones",
+        "Category": "Multimedia",
+        "License": "MIT",
+        "Version": "0.3.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-MainScript": "ui/main.qml"
+}

@@ -247,17 +247,34 @@ pub async fn list_paired_airpods() -> bluer::Result<Vec<(Address, String)>> {
         if let Ok(device) = adapter.device(addr) {
             let paired = device.is_paired().await.unwrap_or(false);
             if paired && is_airpods(&device).await {
-                let name = device
-                    .name()
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| "AirPods".to_string());
+                let name = device.alias().await.unwrap_or_else(|_| "AirPods".to_string());
                 out.push((addr, name));
             }
         }
     }
     Ok(out)
+}
+
+pub fn validate_device_name(name: &str) -> Result<&str, &'static str> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+        return Err("Use a device name of 1–64 characters without control characters.");
+    }
+    Ok(name)
+}
+
+/// BlueZ aliases are persistent display names on this computer.
+pub async fn rename_device(address: Address, name: &str) -> bluer::Result<()> {
+    let session = Session::new().await?;
+    let adapter = session.default_adapter().await?;
+    let device = adapter.device(address)?;
+    if !device.is_paired().await? || !is_airpods(&device).await {
+        return Err(bluer::Error {
+            kind: bluer::ErrorKind::NotFound,
+            message: "Choose a paired AirPods device.".into(),
+        });
+    }
+    device.set_alias(name.to_owned()).await
 }
 
 /// One candidate from a quick-pair LE scan.
@@ -410,6 +427,24 @@ async fn is_airpods(device: &Device) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_names_are_trimmed_and_bounded() {
+        assert_eq!(
+            validate_device_name("  Nico’s AirPods 🎧  "),
+            Ok("Nico’s AirPods 🎧")
+        );
+        assert!(validate_device_name(&"é".repeat(64)).is_ok());
+        for name in [
+            "".to_owned(),
+            "   ".to_owned(),
+            "x".repeat(65),
+            "Air\npods".into(),
+            "Air\0pods".into(),
+        ] {
+            assert!(validate_device_name(&name).is_err());
+        }
+    }
 
     #[test]
     fn proximity_record_decodes_model_and_pair_mode() {

@@ -3,6 +3,11 @@
 /// `capabilities/default.json` are callable from the frontend.
 const COMMANDS: &[&str] = &[
     "get_status",
+    "is_appimage",
+    "install_bundle",
+    "hide_panel",
+    "open_releases",
+    "set_panel_pinned",
     "retry_daemon",
     "set_anc_mode",
     "set_adaptive_noise_level",
@@ -13,6 +18,7 @@ const COMMANDS: &[&str] = &[
     "set_setting",
     "set_start_on_login",
     "list_paired",
+    "rename_device",
     "connect_device",
     "disconnect_device",
     "reconnect",

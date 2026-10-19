@@ -1,0 +1,48 @@
+# Build from packaging/: makepkg -p PKGBUILD-kde -s
+pkgname=airpods-helper-kde
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="AirPods daemon, CLI and native KDE Plasma dock widget"
+arch=('x86_64')
+url="https://github.com/superninjv/airpods-helper"
+license=('MIT')
+depends=('bluez' 'dbus' 'libcap' 'systemd' 'plasma-workspace' 'kirigami' 'qt6-svg' 'kcolorscheme')
+makedepends=('rust' 'cargo' 'cmake' 'ninja' 'extra-cmake-modules' 'kstatusnotifieritem' 'layer-shell-qt' 'kdbusaddons')
+optdepends=('pipewire: parametric EQ (preferred backend)'
+            'wireplumber: EQ routing with PipeWire'
+            'libpulse: PulseAudio EQ and microphone source'
+            'libfdk-aac: AirPods microphone decoding')
+provides=("airpods-helper=$pkgver")
+conflicts=('airpods-helper')
+install=airpods-helper.install
+source=("airpods-helper-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz"
+        'airpods-helper.install')
+# Match the base recipe; release maintainers should pin checksums before publishing.
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+    cd "airpods-helper-$pkgver"
+    cargo build --workspace --profile dist --locked
+    cmake -S kde -B kde/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build kde/build --parallel
+}
+
+check() {
+    cd "airpods-helper-$pkgver"
+    cargo test --workspace --locked
+    ctest --test-dir kde/build --output-on-failure
+}
+
+package() {
+    cd "airpods-helper-$pkgver"
+    install -Dm755 target/dist/airpods-daemon "$pkgdir/usr/bin/airpods-daemon"
+    install -Dm755 target/dist/airpods-cli "$pkgdir/usr/bin/airpods-cli"
+    install -Dm644 daemon/airpods-daemon.service "$pkgdir/usr/lib/systemd/user/airpods-daemon.service"
+    install -Dm644 daemon/org.costa.AirPods.service "$pkgdir/usr/share/dbus-1/services/org.costa.AirPods.service"
+    sed -i 's|%h/.local/bin/airpods-daemon|/usr/bin/airpods-daemon|' \
+        "$pkgdir/usr/lib/systemd/user/airpods-daemon.service" \
+        "$pkgdir/usr/share/dbus-1/services/org.costa.AirPods.service"
+    install -Dm644 config.example.toml "$pkgdir/usr/share/airpods-helper/config.example.toml"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    DESTDIR="$pkgdir" cmake --install kde/build --prefix /usr --component PlasmaWidget
+}

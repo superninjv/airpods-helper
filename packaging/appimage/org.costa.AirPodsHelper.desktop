@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=AirPods Helper
+Comment=AirPods battery, listening modes and equalizer
+Exec=airpods-app
+Icon=org.costa.AirPodsHelper
+Categories=AudioVideo;Audio;Utility;
+Terminal=false
+StartupWMClass=airpods-app

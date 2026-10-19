@@ -10,12 +10,14 @@
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
   const Eq = window.AirPodsEq;
+  const PREVIEW_ERRORS = false; // Enable locally to preview a dismissible error.
 
   const $ = (id) => document.getElementById(id);
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   /** Last status snapshot from the backend. */
   let S = null;
+  let appVersion = "—";
   let firstRender = true;
 
   // ── Utilities ──────────────────────────────────────────────────────────
@@ -97,7 +99,7 @@
     close.addEventListener("click", remove);
     box.append(node);
     while (box.children.length > 3) box.firstElementChild.remove();
-    setTimeout(remove, kind === "error" ? 7000 : 3500);
+    if (kind !== "error") setTimeout(remove, 3500);
   }
 
   /** invoke() with an error toast; rethrows so callers can roll back. */
@@ -166,11 +168,8 @@
       state = "idle"; text = "Disconnected"; name = "AirPods"; sub = "No AirPods connected";
     } else {
       state = "on"; text = "Connected";
-      name = s.model_name || "AirPods";
-      const bits = [];
-      if (s.model) bits.push(s.model);
-      if (s.firmware) bits.push(`Firmware ${s.firmware}`);
-      sub = bits.join(" · ") || "Connected";
+      name = AirPodsPanel.deviceName(s.address, paired);
+      sub = s.model_name || s.model || "";
     }
     pill.dataset.state = state;
     $("conn-text").textContent = text;
@@ -211,8 +210,8 @@
     if (charging) pct.append(icon("i-bolt", "bolt"));
 
     const top = h("div", { class: "bat-top" }, h("span", { class: "bat-name", text: label }));
-    if (ear !== undefined) {
-      top.append(h("span", { class: `ear-chip${ear ? " in" : ""}`, text: ear ? "In ear" : "Out" }));
+    if (ear === true) {
+      top.append(h("span", { class: "ear-chip in", text: "In ear" }));
     }
     return h(
       "div",
@@ -465,16 +464,17 @@
   }
 
   function renderEqChips(s) {
+    const presets = Eq.visiblePresets(s.eq_presets);
     const chips = $("eq-chips");
-    const selected = eqPending !== null ? eqPending : s.eq_preset;
-    const want = ["", ...s.eq_presets.map((p) => p.id)].join("\u0000");
+    const selected = eqPending !== null ? eqPending : Eq.selectedPresetId(s.eq_preset, s.eq_presets);
+    const want = ["", ...presets.map((p) => p.id)].join("\u0000");
     if (chips.dataset.ids !== want) {
       chips.dataset.ids = want;
-      const items = [{ id: "", name: "Off", description: "Turn the equalizer off" }, ...s.eq_presets];
+      const items = [{ id: "", name: "Off", description: "Turn the equalizer off" }, ...presets];
       chips.replaceChildren(...items.map((p) =>
         h("button", {
           type: "button", role: "radio", class: "chip", "data-value": p.id,
-          title: p.description || null, "aria-checked": "false", text: p.name || p.id,
+          title: p.name + (p.description ? ` · ${p.description}` : ""), "aria-checked": "false", text: Eq.presetLabel(p) || p.id,
         })));
     }
     setChecked(chips, selected);
@@ -810,6 +810,7 @@
 
   let paired = [];
   let connecting = null;
+  let renamingAddress = null;
 
   async function refreshPaired() {
     if (!isRunning()) return;
@@ -824,20 +825,22 @@
       btn.classList.remove("spinning");
     }
     renderDevices(S);
-    $("paired-options").replaceChildren(...paired.map((d) => h("option", { value: d.address, text: d.name })));
+    renderHeader(S);
   }
 
-  function deviceRow(name, meta, button) {
+  function deviceRow(name, meta, button, preferred = false) {
     return h("li", { class: "list-row" },
       h("div", { class: "list-text" },
-        h("span", { class: "list-name", text: name }),
+        h("span", { class: "device-heading" }, h("span", { class: "list-name", text: name }),
+          ...(preferred ? [h("span", { class: "badge", text: "Preferred" })] : [])),
         h("span", { class: "list-meta", text: meta })),
       button);
   }
 
   function renderDevices(s) {
-    const show = isRunning() && !s.connected;
-    $("devices-card").hidden = !show;
+    const show = isRunning();
+    for (const id of ["devices-card", "paired-card", "pair-card", "preferred-card"]) $(id).hidden = !show;
+    if (!show) $("nearby-card").hidden = true;
     if (!show) return;
     $("device-empty").hidden = paired.length > 0;
     $("device-list").replaceChildren(...paired.map((d) => {
@@ -847,8 +850,28 @@
         "aria-label": `Connect ${d.name}`, text: busy ? "Connecting…" : "Connect",
       });
       btn.addEventListener("click", () => connectTo(d.address));
+      const rename = h("button", { type: "button", class: "btn small", disabled: connecting !== null, text: "Rename", "aria-label": `Rename ${d.name || "AirPods"}` });
+      rename.addEventListener("click", () => {
+        renamingAddress = d.address;
+        $("rename-form").hidden = false;
+        $("rename-name").value = d.name || "";
+        $("rename-name").focus();
+      });
       const preferred = s.preferred_device && s.preferred_device === d.address.toUpperCase();
-      return deviceRow(d.name || "AirPods", preferred ? `${d.address} · preferred` : d.address, btn);
+      return deviceRow(d.name || "AirPods", d.address, h("div", { class: "btn-row" }, btn, rename), preferred);
+    }));
+    $("preferred-name").textContent = s.preferred_device ? AirPodsPanel.deviceName(s.preferred_device, paired) : "Any paired AirPods";
+    $("preferred-address").textContent = s.preferred_device || "";
+    $("preferred-options").replaceChildren(...[{ name: "Any paired AirPods", address: "" }, ...paired].map(d => {
+      const button = h("button", { type: "button", class: "preferred-option" },
+        h("span", { class: "list-name", text: d.name }),
+        h("span", { class: "device-address", text: d.address }));
+      button.addEventListener("click", () => {
+        $("s-preferred").value = d.address;
+        savePreferred(d.address);
+        $("preferred-picker").open = false;
+      });
+      return h("li", {}, button);
     }));
   }
 
@@ -866,6 +889,23 @@
   }
 
   function wireDevices() {
+    $("rename-cancel").addEventListener("click", () => { $("rename-form").hidden = true; renamingAddress = null; });
+    $("rename-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const name = $("rename-name").value.trim();
+      if (!name || name.length > 64 || /\p{Cc}/u.test(name)) {
+        toast("Use a device name of 1–64 characters without control characters.");
+        return;
+      }
+      if (!renamingAddress || $("rename-save").disabled) return;
+      $("rename-save").disabled = true;
+      try {
+        await call("rename_device", { address: renamingAddress, name });
+        $("rename-form").hidden = true;
+        renamingAddress = null;
+      } catch (_) { /* call() shows the error and preserves the draft. */ }
+      finally { $("rename-save").disabled = false; }
+    });
     $("btn-refresh").addEventListener("click", refreshPaired);
 
     $("btn-disconnect").addEventListener("click", async () => {
@@ -886,6 +926,7 @@
       const list = $("qp-list");
       const SECONDS = 10;
       btn.disabled = true;
+      $("nearby-card").hidden = false;
       list.replaceChildren();
       let left = SECONDS;
       btn.textContent = `Scanning… ${left}s`;
@@ -903,10 +944,10 @@
             ? "Found AirPods in pairing mode:"
             : "Found nearby AirPods, but none in pairing mode. Hold the setup button and scan again, or try pairing:";
           list.replaceChildren(...found.map((c) => {
-            const btn2 = h("button", { type: "button", class: `btn small${c.in_pair_mode ? " btn-primary" : ""}`, "aria-label": `Pair ${c.model || c.name}`, text: "Pair" });
+            const btn2 = h("button", { type: "button", class: `btn small${c.in_pair_mode ? " btn-primary" : ""}`, "aria-label": `Pair and connect ${c.name || c.model}`, text: "Pair and connect" });
             btn2.addEventListener("click", () => pairWith(c.address, btn2));
             const meta = `${c.address} · ${c.rssi} dBm${c.in_pair_mode ? " · ready to pair" : ""}`;
-            return deviceRow(c.model || c.name || "AirPods", meta, btn2);
+            return deviceRow(c.name || c.model || "AirPods", meta, btn2);
           }));
         }
       } catch (e) {
@@ -915,7 +956,7 @@
       } finally {
         clearInterval(tick);
         btn.disabled = false;
-        btn.textContent = "Scan again";
+        btn.textContent = "Find AirPods";
       }
     });
 
@@ -925,7 +966,7 @@
       const mac = normMac(input.value);
       if (!MAC_RE.test(mac)) {
         input.setAttribute("aria-invalid", "true");
-        toast("Enter a MAC address like AA:BB:CC:DD:EE:FF.");
+        toast("Enter a Bluetooth address like AA:BB:CC:DD:EE:FF.");
         input.focus();
         return;
       }
@@ -964,15 +1005,16 @@
       input.closest(".toggle-row").hidden = !daemonSettings;
       if (!pendingSettings.has(input.id)) input.checked = !!s[input.dataset.setting];
     }
-    $("preferred-form").closest(".field-block").hidden = !daemonSettings;
     if (!pendingSettings.has("s-login")) $("s-login").checked = !!s.start_on_login;
     const pref = $("s-preferred");
     if (document.activeElement !== pref && !pendingSettings.has("s-preferred")) pref.value = s.preferred_device || "";
-    const bits = [];
-    if (s.version) bits.push(`airpods-daemon ${s.version}`);
-    if (BACKENDS[s.eq_backend]) bits.push(`audio: ${BACKENDS[s.eq_backend]}`);
-    $("versions").textContent = bits.join(" · ");
-    $("versions").hidden = bits.length === 0;
+    $("versions").textContent = `App ${appVersion} · Daemon ${s.version || "—"}`;
+    $("about-details").textContent = [
+      `Model: ${s.model_name || "—"}${s.model ? ` (${s.model})` : ""}`,
+      `Firmware: ${s.firmware || "—"}`,
+      `Bluetooth address: ${s.address || "—"}`,
+      `Audio backend: ${BACKENDS[s.eq_backend] || s.eq_backend || "—"}`,
+    ].join("\n");
   }
 
   async function savePreferred(value) {
@@ -980,7 +1022,7 @@
     const mac = normMac(value);
     if (mac && !MAC_RE.test(mac)) {
       input.setAttribute("aria-invalid", "true");
-      toast("Enter a MAC address like AA:BB:CC:DD:EE:FF, or leave it empty.");
+      toast("Enter a Bluetooth address like AA:BB:CC:DD:EE:FF, or leave it empty.");
       return;
     }
     if (S && mac === (S.preferred_device || "")) return;
@@ -996,6 +1038,7 @@
   }
 
   function wireSettings() {
+    $("btn-releases").addEventListener("click", () => call("open_releases").catch(() => {}));
     for (const input of document.querySelectorAll("[data-setting]")) {
       input.addEventListener("change", async () => {
         pendingSettings.add(input.id);
@@ -1066,6 +1109,8 @@
   // ── Render ─────────────────────────────────────────────────────────────
 
   function render(s) {
+    const selected = Eq.selectedPresetId(s.eq_preset, s.eq_presets);
+    s = { ...s, eq_preset: selected, eq_status: s.eq_preset === "flat" && !selected ? "off" : s.eq_status };
     const prev = S;
     S = s;
     renderHeader(s);
@@ -1076,11 +1121,12 @@
     renderFeatures(s);
     renderDevices(s);
     renderSettings(s);
+    $("open-devices").hidden = !(isRunning() && !s.connected);
 
     // Transitions that need a fetch.
-    const nowDisconnected = isRunning() && !s.connected;
-    const wasDisconnected = prev && prev.daemon === "running" && !prev.connected;
-    if (nowDisconnected && (!wasDisconnected || firstRender)) refreshPaired();
+    if (isRunning() && (firstRender || !prev || prev.daemon !== "running"
+        || prev.address !== s.address || prev.connected !== s.connected
+        || prev.devices_revision !== s.devices_revision)) refreshPaired();
     if (prev && prev.eq_preset !== s.eq_preset && s.eq_preset) loadPreset(s.eq_preset, true);
     if (prev && prev.eq_presets !== s.eq_presets) {
       // Drop cached details of presets that no longer exist.
@@ -1093,6 +1139,53 @@
   }
 
   function wire() {
+    window.__TAURI__.app.getVersion().then(version => {
+      appVersion = version;
+      if (S) renderSettings(S);
+    }).catch(error => console.warn("Could not read app version", error));
+    AirPodsPanel.wireResize([...document.querySelectorAll("[data-resize]")], direction => {
+      window.__TAURI__.window.getCurrentWindow().startResizeDragging(direction)
+        .catch(error => toast(errText(error)));
+    });
+    new ResizeObserver(() => { if (S) renderEq(S); }).observe($("eq-curve"));
+    const selectPage = AirPodsPanel.wireTabs(
+      [...document.querySelectorAll(".panel-tab")],
+      [...document.querySelectorAll(".panel-page")],
+      page => {
+        document.querySelector(".content").scrollTop = 0;
+        if (page === "devices") refreshPaired();
+      });
+    $("open-devices").addEventListener("click", () => selectPage("devices"));
+    $("panel-refresh").addEventListener("click", () => call("retry_daemon").catch(() => {}));
+    $("panel-hide").addEventListener("click", () => call("hide_panel").catch(() => {}));
+    $("panel-pin").addEventListener("click", async () => {
+      const button = $("panel-pin");
+      const pinned = button.getAttribute("aria-pressed") !== "true";
+      try {
+        await call("set_panel_pinned", { pinned });
+        button.setAttribute("aria-pressed", String(pinned));
+      } catch (_) { /* call() displays the error */ }
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !event.defaultPrevented) call("hide_panel").catch(() => {});
+    });
+    invoke("is_appimage").then(bundled => { $("bundle-install").hidden = !bundled; }).catch(() => {});
+    $("install-bundle").addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = "Installing…";
+      try {
+        await call("install_bundle");
+        toast("Installation complete", "success");
+        await call("retry_daemon");
+      } catch (_) {
+        // call() already displays the installer error.
+      } finally {
+        button.disabled = false;
+        button.textContent = "Install / update";
+      }
+    });
+
     buildAnc();
     wireAdaptive();
     wireToggles();
@@ -1107,12 +1200,13 @@
       if (!isRunning()) return;
       invoke("refresh_eq_presets").catch(() => {});
       if (S.eq_preset && !editor) loadPreset(S.eq_preset, true);
-      if (!S.connected) refreshPaired();
+      refreshPaired();
     });
   }
 
   async function init() {
     wire();
+    if (PREVIEW_ERRORS) toast("Error preview: Could not connect to your AirPods. This is a test; nothing was changed.");
     await listen("status", (e) => render(e.payload));
     await listen("backend-error", (e) => toast(errText(e.payload)));
     try {

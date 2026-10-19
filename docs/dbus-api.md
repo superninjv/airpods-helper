@@ -80,7 +80,8 @@ Setting an invalid value (e.g. malformed MAC) returns `org.freedesktop.DBus.Erro
 ### Devices
 | Method | In | Out | Notes |
 |---|---|---|---|
-| `ListPaired` | | `a(ss)` (mac, name) | |
+| `ListPaired` | | `a(ss)` (mac, name) | Names use BlueZ's locally saved alias, falling back to the remote device name. |
+| `RenameDevice` | `s address, s name` | | Set a paired AirPods device's local BlueZ alias. Names are trimmed, 1–64 Unicode characters, without control characters. This changes the name on this computer. Emits `DevicesChanged`. |
 | `ConnectTo` | `s mac` | | BlueZ connect; AAP follows automatically |
 | `Disconnect` | | | Fails if nothing is connected. Suppresses auto-reconnect until the AirPods connect again. |
 | `Pair` | `s mac` | | pair + trust; ~20s timeout |
@@ -103,4 +104,5 @@ Setting an invalid value (e.g. malformed MAC) returns `org.freedesktop.DBus.Erro
 |---|---|
 | `DeviceConnected` | `s model_name` |
 | `DeviceDisconnected` | |
+| `DevicesChanged` | |
 | `EarDetectionChanged` | `b left, b right` |

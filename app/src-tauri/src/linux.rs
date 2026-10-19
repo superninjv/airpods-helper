@@ -83,11 +83,16 @@ impl Client {
             .await?;
         // Subscribe before the initial load so no change can slip in between.
         let mut changes = props.receive_properties_changed().await?;
+        let proxy = zbus::Proxy::new(conn, BUS, PATH, IFACE).await?;
+        let mut devices = proxy.receive_signal("DevicesChanged").await?;
 
         self.activate_and_load(conn, &props).await;
 
         loop {
             tokio::select! {
+                Some(_) = devices.next() => {
+                    self.store.update(|s| s.devices_revision = s.devices_revision.wrapping_add(1));
+                }
                 Some(sig) = owner_changes.next() => {
                     let args = sig.args()?;
                     if args.new_owner().is_some() {
@@ -297,7 +302,7 @@ impl Client {
                     .to_ascii_uppercase();
                 if !mac.is_empty() && !is_mac(&mac) {
                     return Err(format!(
-                        "'{mac}' is not a valid MAC address (AA:BB:CC:DD:EE:FF)"
+                        "'{mac}' is not a valid Bluetooth address (AA:BB:CC:DD:EE:FF)"
                     ));
                 }
                 ("PreferredDevice", Value::from(mac))
@@ -319,6 +324,16 @@ impl Client {
             .into_iter()
             .map(|(address, name)| PairedDevice { address, name })
             .collect())
+    }
+
+    pub async fn rename_device(&self, address: String, name: String) -> Result<(), String> {
+        let address = normalize_mac(&address)?;
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+            return Err("Use a device name of 1–64 characters without control characters.".into());
+        }
+        self.call("RenameDevice", &(address, name), CALL_TIMEOUT)
+            .await
     }
 
     pub async fn connect(&self, address: String) -> Result<(), String> {
@@ -659,7 +674,7 @@ fn normalize_mac(s: &str) -> Result<String, String> {
         Ok(mac)
     } else {
         Err(format!(
-            "'{}' is not a valid MAC address (AA:BB:CC:DD:EE:FF)",
+            "'{}' is not a valid Bluetooth address (AA:BB:CC:DD:EE:FF)",
             s.trim()
         ))
     }

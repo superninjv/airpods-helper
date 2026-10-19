@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=AirPods Helper
+Comment=AirPods battery and noise control
+Exec=airpods-helper-kde
+Icon=org.costa.AirPodsHelper
+Categories=AudioVideo;Audio;Utility;
+Keywords=AirPods;Bluetooth;Battery;Headphones;
+Terminal=false
+StartupWMClass=org.costa.AirPodsHelper

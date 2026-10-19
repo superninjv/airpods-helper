@@ -371,6 +371,23 @@ impl AirPodsInterface {
         self.control_result(Control::Reconnect).await
     }
 
+    async fn rename_device(
+        &self,
+        address: &str,
+        name: &str,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        let address = address
+            .parse()
+            .map_err(|_| fdo::Error::InvalidArgs("Enter a valid Bluetooth address.".into()))?;
+        let name = crate::bluez::validate_device_name(name)
+            .map_err(|e| fdo::Error::InvalidArgs(e.into()))?;
+        crate::bluez::rename_device(address, name)
+            .await
+            .map_err(|e| failed(format!("Could not rename device: {e}")))?;
+        Self::devices_changed(&emitter).await.map_err(failed)
+    }
+
     /// Trigger a BlueZ-level connect to the given AirPods MAC.
     /// The AAP session starts automatically once BlueZ reports the connection.
     async fn connect_to(&self, address: &str) -> fdo::Result<()> {
@@ -506,6 +523,9 @@ impl AirPodsInterface {
 
     #[zbus(signal)]
     pub async fn device_disconnected(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn devices_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     #[zbus(signal)]
     pub async fn ear_detection_changed(

@@ -5,7 +5,7 @@
 // the daemon's 48 kHz sample rate.
 "use strict";
 
-(function () {
+var AirPodsEq = (function () {
   const FS = 48000;
   const F_MIN = 20;
   const F_MAX = 20000;
@@ -128,22 +128,27 @@
   }
 
   /**
-   * Draw the response of `preset` into `svg` (viewBox 0 0 360 132).
+   * Draw at the SVG's displayed size so text and markers never stretch.
    * `preset` null → flat, muted line (EQ off).
    */
   function plot(svg, preset, { muted = false } = {}) {
-    const W = 360, H = 132, padL = 26, padR = 4, padT = 6, padB = 16;
+    const W = svg.clientWidth || 360, H = svg.clientHeight || 200;
+    const angle = 60, radians = angle * Math.PI / 180, labelHeight = 14, labelWidth = 48;
+    const padL = 48, padR = Math.ceil(labelWidth * Math.cos(radians) + labelHeight * Math.sin(radians)) + 4;
+    const padT = 8, padB = Math.ceil(labelWidth * Math.sin(radians) + labelHeight * Math.cos(radians)) + 8;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const pw = W - padL - padR, ph = H - padT - padB;
     const data = response(preset);
     const peak = data.reduce((m, [, db]) => Math.max(m, Math.abs(db)), 0);
-    const range = peak <= 12 ? 12 : peak <= 18 ? 18 : 24;
+    const range = Math.max(12, Math.ceil(peak / 6) * 6);
     const lmin = Math.log10(F_MIN), lmax = Math.log10(F_MAX);
     const x = (f) => padL + ((Math.log10(f) - lmin) / (lmax - lmin)) * pw;
     const y = (db) => padT + ((range - Math.max(-range, Math.min(range, db))) / (2 * range)) * ph;
 
     svg.replaceChildren();
     const grid = el("g", { class: "eq-grid" });
-    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) {
+    grid.append(el("rect", { x: padL, y: padT, width: pw, height: ph, fill: "none" }));
+    for (const f of [100, 1000, 10000]) {
       grid.append(el("line", { x1: x(f), x2: x(f), y1: padT, y2: padT + ph }));
     }
     const step = range / 2;
@@ -153,14 +158,18 @@
     svg.append(grid);
 
     const labels = el("g", { class: "eq-labels" });
-    for (const [f, t] of [[100, "100"], [1000, "1k"], [10000, "10k"]]) {
-      const tx = el("text", { x: x(f), y: H - 3, "text-anchor": "middle" });
-      tx.textContent = t;
+    for (const f of [20, 100, 1000, 10000, 20000]) {
+      const tx = el("text", {
+        x: 0, y: 11,
+        transform: `translate(${x(f) + labelHeight * Math.sin(radians)} ${padT + ph + 4}) rotate(${angle})`,
+        "data-frequency": f,
+      });
+      tx.textContent = formatHz(f);
       labels.append(tx);
     }
     for (const db of [range, 0, -range]) {
       const ty = el("text", { x: padL - 4, y: y(db) + 3.5, "text-anchor": "end" });
-      ty.textContent = db > 0 ? `+${db}` : String(db);
+      ty.textContent = `${db} dB`;
       labels.append(ty);
     }
     svg.append(labels);
@@ -194,5 +203,19 @@
     return f >= 1000 ? `${+(f / 1000).toFixed(f >= 10000 ? 0 : 1)} kHz` : `${Math.round(f)} Hz`;
   }
 
-  window.AirPodsEq = { FILTER_TYPES, response, plot, formatHz, coefficients, magnitudeDb };
+  function visiblePresets(presets) {
+    return presets.filter(p => p.id !== "flat" || p.user_editable);
+  }
+
+  function selectedPresetId(id, presets) {
+    return id === "flat" && !presets.some(p => p.id === id && p.user_editable) ? "" : id || "";
+  }
+
+  function presetLabel(preset) {
+    return preset.id === "airpods-pro-crinacle" && !preset.user_editable ? "Crinacle" : preset.name;
+  }
+
+  return { FILTER_TYPES, response, plot, formatHz, coefficients, magnitudeDb, visiblePresets, selectedPresetId, presetLabel };
 })();
+
+if (typeof window !== "undefined") window.AirPodsEq = AirPodsEq;

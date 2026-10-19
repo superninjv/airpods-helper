@@ -4,8 +4,11 @@
 //! (`org.costa.AirPods`). State flows backend → [`status::Store`] → `status` event → webview;
 //! actions flow webview → Tauri command → backend.
 
+mod bundle;
+mod panel;
 mod status;
 mod tray;
+mod tray_icon;
 
 mod linux;
 pub use linux::Client as Backend;
@@ -105,6 +108,11 @@ async fn list_paired(backend: B<'_>) -> Result<Vec<PairedDevice>, String> {
 }
 
 #[tauri::command]
+async fn rename_device(backend: B<'_>, address: String, name: String) -> Result<(), String> {
+    backend.rename_device(address, name).await
+}
+
+#[tauri::command]
 async fn connect_device(backend: B<'_>, address: String) -> Result<(), String> {
     backend.connect(address).await
 }
@@ -160,11 +168,7 @@ async fn delete_eq_preset(backend: B<'_>, id: String) -> Result<(), String> {
 // ── Window helpers ────────────────────────────────────────────────────────
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
+    panel::show(app);
 }
 
 pub fn toggle_main_window<R: Runtime>(app: &AppHandle<R>) {
@@ -213,10 +217,16 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![MINIMIZED_ARG]),
         ))
+        .manage(panel::PanelState::default())
         .manage(store.clone())
         .manage(backend.clone())
         .manage(tray::TrayCache::default())
         .invoke_handler(tauri::generate_handler![
+            panel::hide_panel,
+            panel::open_releases,
+            panel::set_panel_pinned,
+            bundle::is_appimage,
+            bundle::install_bundle,
             get_status,
             retry_daemon,
             set_anc_mode,
@@ -228,6 +238,7 @@ fn main() {
             set_setting,
             set_start_on_login,
             list_paired,
+            rename_device,
             connect_device,
             disconnect_device,
             reconnect,
@@ -259,6 +270,9 @@ fn main() {
             {
                 api.prevent_close();
                 let _ = window.hide();
+            }
+            if let WindowEvent::Focused(focused) = event {
+                panel::focus_changed(window, *focused);
             }
         })
         .run(tauri::generate_context!())

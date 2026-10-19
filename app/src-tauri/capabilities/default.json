@@ -6,6 +6,7 @@
     "main"
   ],
   "permissions": [
+    "core:app:allow-version",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-get-status",
@@ -19,6 +20,7 @@
     "allow-set-setting",
     "allow-set-start-on-login",
     "allow-list-paired",
+    "allow-rename-device",
     "allow-connect-device",
     "allow-disconnect-device",
     "allow-reconnect",
@@ -28,6 +30,13 @@
     "allow-get-eq-preset",
     "allow-set-eq-preset",
     "allow-save-eq-preset",
-    "allow-delete-eq-preset"
+    "allow-delete-eq-preset",
+    "allow-is-appimage",
+    "allow-install-bundle",
+    "allow-hide-panel",
+    "allow-open-releases",
+    "allow-set-panel-pinned",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
   ]
 }

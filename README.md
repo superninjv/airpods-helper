@@ -37,6 +37,15 @@ Battery, ear detection and EQ work on every model. Models not in this table get 
 
 Every install path grants the daemon the `cap_net_raw,cap_net_admin` capability it needs to open the L2CAP socket. Once installed, run `airpods-cli doctor`.
 
+**AppImage (GUI + daemon):** the general-purpose Tauri bundle is described in
+[the AppImage instructions](packaging/appimage/README.md). The AppImage installs a
+launcher and the bundled daemon for your user; Bluetooth permission setup uses
+a polkit authentication dialog. It includes standard AppImage update metadata.
+
+**KDE Plasma 6:** the [native dock widget](kde/README.md) shares the same daemon
+and CLI; an Arch package recipe is included. See the [distribution notes](kde/README.md#distribution)
+for package formats, update paths and remaining release work.
+
 **Arch Linux**
 ```bash
 cd packaging && makepkg -si
@@ -144,7 +153,15 @@ You can also create and edit presets in the desktop app, which draws the frequen
 
 ## Desktop app and widgets
 
-- **Desktop app** (`app/`): a Tauri tray app with a settings window. It covers every control, the EQ editor, pairing and the settings. It's a client of the daemon, so the daemon must be installed. To build it: `cd app/src-tauri && cargo build --release`.
+- **KDE dock widget** (`kde/`): place **AirPods Helper** directly on the Plasma
+  panel for native theming, popup behavior and a battery-ring icon. The Arch
+  recipe bundles the widget, daemon and CLI; see the [KDE instructions](kde/README.md).
+- **KDE development client** (`kde/`): the same controls in a standalone tray
+  panel. Build and run instructions are in the KDE README.
+- **Desktop app** (`app/`): a resizable Tauri tray panel with Controls, Devices
+  and Settings tabs, EQ editing, pairing and Keep Open. Install the GUI and daemon
+  through the [AppImage](packaging/appimage/README.md), or build from source with
+  `cd app/src-tauri && cargo build --release`. Wayland controls panel placement.
 - **AGS widgets** (`widget/`): a GTK4 bar button and popover for [AGS](https://github.com/Aylur/ags), plus a popup when AirPods connect.
 
   ```typescript
@@ -217,6 +234,7 @@ cargo test -p airpods-daemon -- --ignored --test-threads=1   # routing tests aga
 | `daemon/` | BlueZ monitor, AAP session, D-Bus service, EQ backends, MPRIS. |
 | `cli/` | `airpods-cli`. |
 | `app/` | Tauri desktop app. |
+| `kde/` | Native Qt 6/Kirigami desktop app and battery tray. |
 
 Protocol details come from [LibrePods](https://github.com/librepods-org/librepods), whose research made this project possible. Captures from new models or firmware are always useful, so open an issue.
 

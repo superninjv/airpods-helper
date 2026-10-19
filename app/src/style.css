@@ -70,6 +70,7 @@
 
 html,
 body {
+  height: 100%;
   margin: 0;
   background: var(--bg);
   color: var(--text);
@@ -77,7 +78,7 @@ body {
   font-size: 14px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 body {
@@ -131,20 +132,24 @@ code {
 }
 
 .app {
-  max-width: 520px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
   margin: 0 auto;
 }
 
 /* ── Header ─────────────────────────────────────────── */
 
 .header {
-  position: sticky;
+  position: static;
+  flex: none;
   top: 0;
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px 12px;
+  gap: 8px;
+  padding: 10px 12px;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
@@ -153,18 +158,19 @@ code {
 
 .header-icon {
   flex: none;
-  width: 36px;
-  height: 36px;
-  padding: 7px;
+  width: 38px;
+  height: 38px;
+  padding: 3px;
   border-radius: 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 0;
   color: var(--text);
 }
 
 .header-text {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .device-name {
@@ -201,6 +207,7 @@ code {
 }
 
 .pill-dot {
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -221,6 +228,9 @@ code {
 /* ── Layout ─────────────────────────────────────────── */
 
 .content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -432,7 +442,7 @@ code {
 
 .battery-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 8px;
 }
 .battery-grid.single { grid-template-columns: 1fr; }
@@ -481,7 +491,7 @@ code {
   font-variant-numeric: tabular-nums;
 }
 .bat-pct .unit { font-size: 13px; font-weight: 550; color: var(--text-2); margin-left: 1px; }
-.bat-pct .bolt { width: 14px; height: 14px; margin-left: 4px; color: var(--ok); }
+.bat-pct .bolt { flex: none; width: 14px; height: 14px; margin-left: 4px; color: var(--ok); }
 .bat-unknown .bat-pct { color: var(--text-3); }
 
 .meter {
@@ -665,18 +675,18 @@ summary + .toggle-row { border-top: none; }
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .chip {
   max-width: 100%;
   height: 28px;
-  padding: 0 11px;
+  padding: 5px 8px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: transparent;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
@@ -703,6 +713,7 @@ summary + .toggle-row { border-top: none; }
 #mic-message { margin: 0; }
 
 .eq-graph {
+  min-width: 0;
   margin: 12px 0 0;
   padding: 8px 6px 4px 2px;
   border-radius: var(--radius-sm);
@@ -712,13 +723,13 @@ summary + .toggle-row { border-top: none; }
 #eq-curve {
   display: block;
   width: 100%;
-  height: 132px;
-  overflow: visible;
+  height: 200px;
+  overflow: hidden;
 }
 
-.eq-grid line { stroke: var(--border-strong); stroke-width: 0.6; vector-effect: non-scaling-stroke; }
+.eq-grid line, .eq-grid rect { stroke: var(--border-strong); stroke-width: 0.6; vector-effect: non-scaling-stroke; }
 .eq-grid line.zero { stroke: var(--text-3); stroke-width: 1; }
-.eq-labels text { fill: var(--text-3); font-size: 9px; font-family: var(--font); }
+.eq-labels text { fill: var(--text-3); font-size: 11px; font-family: var(--font); }
 .eq-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .eq-line.muted { stroke: var(--text-3); stroke-dasharray: 4 3; }
 .eq-area { fill: var(--accent-soft); stroke: none; }
@@ -844,42 +855,6 @@ select { padding-right: 4px; }
 }
 .inline-form input { flex: 1; font-family: var(--mono); font-size: 12.5px; }
 
-/* ── Settings ───────────────────────────────────────── */
-
-.settings summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: -2px 0;
-  padding: 2px 0;
-  cursor: pointer;
-  list-style: none;
-  border-radius: 6px;
-}
-.settings summary::-webkit-details-marker { display: none; }
-.settings summary::after {
-  content: "";
-  width: 7px;
-  height: 7px;
-  margin-right: 4px;
-  border-right: 1.6px solid var(--text-3);
-  border-bottom: 1.6px solid var(--text-3);
-  transform: rotate(45deg) translateY(-2px);
-  transition: transform 0.15s;
-}
-.settings[open] summary { margin-bottom: 6px; }
-.settings[open] summary::after { transform: rotate(-135deg) translateY(-2px); }
-
-.field-block { padding: 9px 0 0; border-top: 1px solid var(--border); }
-.field-block .inline-form { margin-top: 6px; }
-
-.footer-note {
-  margin: 12px 0 0;
-  font-size: 11px;
-  color: var(--text-3);
-  text-align: center;
-}
-
 /* ── Toasts ─────────────────────────────────────────── */
 
 .toasts {
@@ -932,3 +907,49 @@ select { padding-right: 4px; }
     transition: none !important;
   }
 }
+
+/* Compact standalone panel; content scrolls while the header and tabs stay visible. */
+.header .icon-btn { flex: none; }
+.header .pill { height: 18px; padding: 0 3px; background: transparent; font-size: 11px; }
+.header .icon-btn[aria-pressed="true"] { color: var(--accent); background: var(--surface-2); }
+.panel-tabs { display: flex; flex: none; border-bottom: 1px solid var(--border); }
+.panel-tab { flex: 1; height: 42px; border: 0; background: transparent; color: var(--text-2); cursor: pointer; }
+.panel-tab svg { width: 20px; height: 20px; vertical-align: middle; }
+.panel-tab[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+.panel-page { display: flex; flex-direction: column; gap: 10px; }
+.about-details { margin: 8px 0 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+#about-card { display: flex; flex-direction: column; gap: 8px; }
+#about-card > * { margin: 0; }
+#page-devices .card { display: flex; flex-direction: column; gap: 8px; }
+#page-devices .card > * { margin: 0; }
+#page-devices .list:empty { display: none; }
+#page-devices .list-row { flex-direction: column; align-items: stretch; gap: 6px; }
+#page-devices .list-row > .btn { align-self: flex-start; }
+#page-devices .btn-row, #page-devices .inline-form, #about-card .btn-row { flex-wrap: wrap; }
+#page-devices .inline-form input { flex: 1 1 150px; }
+.device-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.device-heading .badge { flex: none; }
+.device-address { flex: none; font-size: 11px; color: var(--text-3); font-family: var(--mono); }
+.preferred-picker > summary, .preferred-option { display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; }
+.preferred-picker > summary { border: 1px solid var(--border-strong); border-radius: 7px; }
+.preferred-option { width: 100%; border: 0; background: transparent; text-align: start; }
+.preferred-option:hover { background: var(--surface-2); }
+.preferred-picker #preferred-options { margin: 6px 0; }
+.preferred-picker .inline-form { margin-top: 8px; }
+.device-rename { display: flex; flex-direction: column; gap: 8px; }
+.preferred-picker > summary::after { content: "▾"; margin-inline-start: auto; flex: none; }
+#preferred-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-address:empty { display: none; }
+
+.resize-edge { position: fixed; z-index: 30; }
+.resize-edge.north { top: 0; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.resize-edge.south { bottom: 0; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.resize-edge.east { right: 0; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.resize-edge.west { left: 0; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.resize-edge.corner { width: 10px; height: 10px; }
+.resize-edge.corner.north { top: 0; bottom: auto; }
+.resize-edge.corner.south { bottom: 0; top: auto; }
+.resize-edge.corner.east { right: 0; left: auto; }
+.resize-edge.corner.west { left: 0; right: auto; }
+.resize-edge.north.east, .resize-edge.south.west { cursor: nesw-resize; }
+.resize-edge.north.west, .resize-edge.south.east { cursor: nwse-resize; }
